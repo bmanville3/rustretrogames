@@ -1,3 +1,4 @@
+use rustretrogames::app::State;
 fn main() {
-    println!("Hello, world!");
+    let _ = iced::run("Retro Rust Games", State::update, State::view);
 }
