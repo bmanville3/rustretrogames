@@ -4,10 +4,10 @@ use crate::{
     view::View,
     views::{
         home::{Home, HomeMessage},
-        pac_man::{PacMan, PacManMessage},
-        pong::{Pong, PongMessage},
-        snake::{Snake, SnakeMessage},
-        sudoku::{Sudoku, SudokuMessage},
+        pac_man::pac_man_home::{PacMan, PacManMessage},
+        pong::pong_home::{Pong, PongMessage},
+        snake::snake_home::{Snake, SnakeMessage},
+        sudoku::sudoku_home::{Sudoku, SudokuMessage},
     },
 };
 
