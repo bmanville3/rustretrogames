@@ -1,4 +1,12 @@
+use log::debug;
 use rustretrogames::app::State;
-fn main() {
-    let _ = iced::run("Retro Rust Games", State::update, State::view);
+
+#[tokio::main]
+async fn main() {
+    std::env::set_var("RUST_LOG", "rustretrogames=debug");
+    env_logger::init();
+    debug!("Debug on");
+    let _ = iced::application("Retro Rust Games", State::update, State::view)
+        .subscription(State::subscription)
+        .run();
 }

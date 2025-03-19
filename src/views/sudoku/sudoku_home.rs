@@ -4,7 +4,7 @@ use iced::{
 };
 use log::debug;
 
-use crate::{app::Message, view::View};
+use crate::{app::Message, view::View, views::home::HomeMessage};
 
 #[derive(Clone, Debug)]
 pub enum SudokuMessage {
@@ -45,9 +45,9 @@ impl View for Sudoku {
     fn update(&mut self, message: Message) -> Option<Message> {
         if let Message::Sudoku(message) = message {
             match message {
-                SudokuMessage::Home => Some(Message::new_home()),
+                SudokuMessage::Home => Some(Message::Home(HomeMessage::Default)),
                 // treating as refresh right now
-                SudokuMessage::Default => Some(Message::new_pacman()),
+                SudokuMessage::Default => Some(Message::Sudoku(SudokuMessage::Default)),
             }
         } else {
             debug!("Received message for Sudoku but was: {:#?}", message);
@@ -75,5 +75,9 @@ impl View for Sudoku {
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Center)
             .into()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::Subscription::none()
     }
 }

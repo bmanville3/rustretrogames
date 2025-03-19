@@ -1,12 +1,16 @@
-use iced::Element;
+use iced::keyboard::{self, Key};
+use iced::time::{self, Duration, Instant};
+use iced::{Element, Subscription};
+use log::debug;
 
+use crate::bots::snake::random_bot::RandomBot;
 use crate::{
     view::View,
     views::{
         home::{Home, HomeMessage},
         pac_man::pac_man_home::{PacMan, PacManMessage},
         pong::pong_home::{Pong, PongMessage},
-        snake::snake_home::{Snake, SnakeMessage},
+        snake::snake_home::{self, Snake, SnakeMessage},
         sudoku::sudoku_home::{Sudoku, SudokuMessage},
     },
 };
@@ -14,6 +18,8 @@ use crate::{
 // https://docs.rs/iced/latest/i686-unknown-linux-gnu/iced/?search=command#scaling-applications
 pub struct State {
     screen: Screen,
+    millis_between_frames: u64,
+    counter: u64,
 }
 
 #[derive(Debug)]
@@ -21,30 +27,8 @@ enum Screen {
     Home(Home),
     PacMan(PacMan),
     Pong(Pong),
-    Snake(Snake),
+    Snake(Snake<RandomBot>),
     Sudoku(Sudoku),
-}
-
-impl Screen {
-    pub fn new_home() -> Self {
-        Screen::Home(Home::new())
-    }
-
-    pub fn new_pacman() -> Self {
-        Screen::PacMan(PacMan::new())
-    }
-
-    pub fn new_pong() -> Self {
-        Screen::Pong(Pong::new())
-    }
-
-    pub fn new_snake() -> Self {
-        Screen::Snake(Snake::new())
-    }
-
-    pub fn new_sudoku() -> Self {
-        Screen::Sudoku(Sudoku::new())
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -54,33 +38,8 @@ pub enum Message {
     Pong(PongMessage),
     Snake(SnakeMessage),
     Sudoku(SudokuMessage),
-}
-
-impl Message {
-    #[must_use]
-    pub fn new_home() -> Self {
-        Message::Home(HomeMessage::new())
-    }
-
-    #[must_use]
-    pub fn new_pacman() -> Self {
-        Message::PacMan(PacManMessage::new())
-    }
-
-    #[must_use]
-    pub fn new_pong() -> Self {
-        Message::Pong(PongMessage::new())
-    }
-
-    #[must_use]
-    pub fn new_snake() -> Self {
-        Message::Snake(SnakeMessage::new())
-    }
-
-    #[must_use]
-    pub fn new_sudoku() -> Self {
-        Message::Sudoku(SudokuMessage::new())
-    }
+    KeyPressed(Key),
+    Timer(Instant),
 }
 
 // Implement `View` for `Screen`
@@ -104,6 +63,16 @@ impl View for Screen {
             Screen::Sudoku(screen) => screen.view(),
         }
     }
+
+    fn subscription(&self) -> Subscription<Message> {
+        match self {
+            Screen::Home(screen) => screen.subscription(),
+            Screen::PacMan(screen) => screen.subscription(),
+            Screen::Pong(screen) => screen.subscription(),
+            Screen::Snake(screen) => screen.subscription(),
+            Screen::Sudoku(screen) => screen.subscription(),
+        }
+    }
 }
 
 impl State {
@@ -111,24 +80,64 @@ impl State {
     pub fn new() -> Self {
         Self {
             screen: Screen::Home(Home::new()),
+            millis_between_frames: 0,
+            counter: 0,
         }
     }
 
-    pub fn update(state: &mut State, message: Message) {
-        if let Some(next) = state.screen.update(message) {
+    pub fn update(&mut self, message: Message) {
+        #[cfg(debug_assertions)]
+        {
+            if let Message::Timer(_) = &message {
+                // false if statement
+            } else {
+                debug!("Update message in State: {:#?}", message);
+            }
+        }
+        if let Some(next) = self.screen.update(message) {
             match next {
-                Message::Home(_) => state.screen = Screen::new_home(),
-                Message::PacMan(_) => state.screen = Screen::new_pacman(),
-                Message::Pong(_) => state.screen = Screen::new_pong(),
-                Message::Snake(_) => state.screen = Screen::new_snake(),
-                Message::Sudoku(_) => state.screen = Screen::new_sudoku(),
+                Message::Home(_) => {
+                    self.screen = {
+                        self.millis_between_frames = 0;
+                        Screen::Home(Home::new())
+                    }
+                }
+                Message::PacMan(_) => self.screen = Screen::PacMan(PacMan::new()),
+                Message::Pong(_) => self.screen = Screen::Pong(Pong::new()),
+                Message::Snake(_) => {
+                    self.screen = {
+                        self.millis_between_frames = snake_home::MILLIS_BETWEEN_FRAMES;
+                        let mut game = Snake::new();
+                        // if overflow ever happens (which it shouldnt), it should be fine as the subscriptions will already be dropped
+                        // there are 2^64 - 1 ids avaliable so...
+                        self.counter += 1;
+                        game.sub_key = self.counter;
+                        Screen::Snake(game)
+                    }
+                }
+                Message::Sudoku(_) => self.screen = Screen::Sudoku(Sudoku::new()),
+                _ => (),
             }
         }
     }
 
     #[must_use]
-    pub fn view(state: &State) -> Element<Message> {
-        state.screen.view()
+    pub fn view(&self) -> Element<Message> {
+        self.screen.view()
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        let tick = if self.millis_between_frames == 0 {
+            Subscription::none()
+        } else {
+            time::every(Duration::from_millis(self.millis_between_frames)).map(Message::Timer)
+        };
+
+        let keyboard = keyboard::on_key_press(|key, _| Some(Message::KeyPressed(key)));
+
+        let additional_subscription = self.screen.subscription();
+
+        Subscription::batch(vec![tick, keyboard, additional_subscription])
     }
 }
 

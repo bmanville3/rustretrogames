@@ -4,7 +4,7 @@ use iced::{
 };
 use log::debug;
 
-use crate::{app::Message, view::View};
+use crate::{app::Message, view::View, views::home::HomeMessage};
 
 #[derive(Clone, Debug)]
 pub enum PongMessage {
@@ -45,9 +45,9 @@ impl View for Pong {
     fn update(&mut self, message: Message) -> Option<Message> {
         if let Message::Pong(message) = message {
             match message {
-                PongMessage::Home => Some(Message::new_home()),
+                PongMessage::Home => Some(Message::Home(HomeMessage::Default)),
                 // treating as refresh right now
-                PongMessage::Default => Some(Message::new_pacman()),
+                PongMessage::Default => Some(Message::Pong(PongMessage::Default)),
             }
         } else {
             debug!("Received message for Pong but was: {:#?}", message);
@@ -75,5 +75,9 @@ impl View for Pong {
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Center)
             .into()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::Subscription::none()
     }
 }
