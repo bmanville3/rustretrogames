@@ -4,6 +4,8 @@
 #![deny(unsafe_code)]
 
 pub mod app;
-pub mod bots;
+pub mod models;
 pub mod view;
+pub mod view_model;
+pub mod view_models;
 pub mod views;

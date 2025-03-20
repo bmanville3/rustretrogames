@@ -6,7 +6,7 @@ use log::debug;
 
 use crate::{app::Message, view::View};
 
-use super::snake::snake_home::SnakeMessage;
+use super::snake::snake_mediator::SnakeMessage;
 
 #[derive(Clone, Debug)]
 pub enum HomeMessage {
@@ -41,7 +41,9 @@ impl View for Home {
     fn update(&mut self, message: Message) -> Option<Message> {
         if let Message::Home(message) = message {
             match message {
-                HomeMessage::Snake => Some(Message::Snake(SnakeMessage::Default)),
+                HomeMessage::Snake => {
+                    Some(Message::Snake(SnakeMessage::SnakeSelectionScreenTransition))
+                }
                 HomeMessage::Default => Some(Message::Home(HomeMessage::Default)),
             }
         } else {

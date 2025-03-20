@@ -1,7 +1,8 @@
-use crate::views::snake::snake_home::{self, SnakeBlock};
+use crate::models::snake::{
+    snake_bot::SnakeBot,
+    snake_model::{self, SnakeBlock},
+};
 use rand::Rng;
-
-use super::snake_bot::SnakeBot;
 
 #[derive(Debug)]
 pub struct RandomBot {
@@ -22,7 +23,7 @@ impl SnakeBot for RandomBot {
 
     fn new() -> Self {
         Self {
-            move_time: snake_home::MILLIS_BETWEEN_FRAMES * 2,
+            move_time: snake_model::MILLIS_BETWEEN_FRAMES * 2,
         }
     }
 
