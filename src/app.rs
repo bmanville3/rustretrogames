@@ -8,10 +8,7 @@ use crate::{
     view::View,
     views::{
         home::{Home, HomeMessage},
-        pac_man::pac_man_home::{PacMan, PacManMessage},
-        pong::pong_home::{Pong, PongMessage},
         snake::snake_home::{self, Snake, SnakeMessage},
-        sudoku::sudoku_home::{Sudoku, SudokuMessage},
     },
 };
 
@@ -25,19 +22,13 @@ pub struct State {
 #[derive(Debug)]
 enum Screen {
     Home(Home),
-    PacMan(PacMan),
-    Pong(Pong),
     Snake(Snake<RandomBot>),
-    Sudoku(Sudoku),
 }
 
 #[derive(Clone, Debug)]
 pub enum Message {
     Home(HomeMessage),
-    PacMan(PacManMessage),
-    Pong(PongMessage),
     Snake(SnakeMessage),
-    Sudoku(SudokuMessage),
     KeyPressed(Key),
     Timer(Instant),
 }
@@ -47,30 +38,21 @@ impl View for Screen {
     fn update(&mut self, message: Message) -> Option<Message> {
         match (self, message) {
             (Screen::Home(screen), msg) => screen.update(msg),
-            (Screen::PacMan(screen), msg) => screen.update(msg),
-            (Screen::Pong(screen), msg) => screen.update(msg),
             (Screen::Snake(screen), msg) => screen.update(msg),
-            (Screen::Sudoku(screen), msg) => screen.update(msg),
         }
     }
 
     fn view(&self) -> Element<Message> {
         match self {
             Screen::Home(screen) => screen.view(),
-            Screen::PacMan(screen) => screen.view(),
-            Screen::Pong(screen) => screen.view(),
             Screen::Snake(screen) => screen.view(),
-            Screen::Sudoku(screen) => screen.view(),
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
         match self {
             Screen::Home(screen) => screen.subscription(),
-            Screen::PacMan(screen) => screen.subscription(),
-            Screen::Pong(screen) => screen.subscription(),
             Screen::Snake(screen) => screen.subscription(),
-            Screen::Sudoku(screen) => screen.subscription(),
         }
     }
 }
@@ -102,8 +84,6 @@ impl State {
                         Screen::Home(Home::new())
                     }
                 }
-                Message::PacMan(_) => self.screen = Screen::PacMan(PacMan::new()),
-                Message::Pong(_) => self.screen = Screen::Pong(Pong::new()),
                 Message::Snake(_) => {
                     self.screen = {
                         self.millis_between_frames = snake_home::MILLIS_BETWEEN_FRAMES;
@@ -115,7 +95,6 @@ impl State {
                         Screen::Snake(game)
                     }
                 }
-                Message::Sudoku(_) => self.screen = Screen::Sudoku(Sudoku::new()),
                 _ => (),
             }
         }

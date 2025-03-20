@@ -1,23 +1,17 @@
 use iced::{
-    widget::{button, column, container, row, text},
+    widget::{button, column, container, text},
     Alignment, Element, Length, Subscription,
 };
 use log::debug;
 
 use crate::{app::Message, view::View};
 
-use super::{
-    pac_man::pac_man_home::PacManMessage, pong::pong_home::PongMessage,
-    snake::snake_home::SnakeMessage, sudoku::sudoku_home::SudokuMessage,
-};
+use super::snake::snake_home::SnakeMessage;
 
 #[derive(Clone, Debug)]
 pub enum HomeMessage {
     Default,
-    PacMan,
-    Pong,
     Snake,
-    Sudoku,
 }
 
 impl HomeMessage {
@@ -47,10 +41,7 @@ impl View for Home {
     fn update(&mut self, message: Message) -> Option<Message> {
         if let Message::Home(message) = message {
             match message {
-                HomeMessage::PacMan => Some(Message::PacMan(PacManMessage::Default)),
-                HomeMessage::Pong => Some(Message::Pong(PongMessage::Default)),
                 HomeMessage::Snake => Some(Message::Snake(SnakeMessage::Default)),
-                HomeMessage::Sudoku => Some(Message::Sudoku(SudokuMessage::Default)),
                 HomeMessage::Default => Some(Message::Home(HomeMessage::Default)),
             }
         } else {
@@ -75,16 +66,7 @@ impl View for Home {
 
         let buttons = column![
             text("Welcome! Choose a game to start"),
-            row![
-                make_button("Pac-Man", HomeMessage::PacMan),
-                make_button("Pong", HomeMessage::Pong),
-            ]
-            .spacing(10),
-            row![
-                make_button("Snake", HomeMessage::Snake),
-                make_button("Sudoku", HomeMessage::Sudoku),
-            ]
-            .spacing(10),
+            make_button("Snake", HomeMessage::Snake),
         ]
         .spacing(20)
         .align_x(Alignment::Center);
