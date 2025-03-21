@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod models;
+pub mod rl;
 pub mod view;
 pub mod view_model;
 pub mod view_models;
