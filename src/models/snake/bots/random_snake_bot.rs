@@ -1,33 +1,27 @@
 use crate::models::snake::{
     snake_bot::SnakeBot,
-    snake_model::{self, SnakeBlock},
+    snake_game::{self, SnakeAction, SnakeGame},
 };
-use rand::Rng;
 
 #[derive(Debug)]
 pub struct RandomBot {
-    move_time: u64,
+    player_indx: usize,
 }
 
 impl SnakeBot for RandomBot {
-    fn make_move(&self, _grid: Vec<Vec<SnakeBlock>>) -> (i8, i8) {
-        let sign = rand::thread_rng().gen_bool(0.5);
-        let index = rand::thread_rng().gen_range(0..=1);
-        let mult = if sign { -1 } else { 1 };
-        if index == 0 {
-            (mult, 0)
-        } else {
-            (0, mult)
-        }
+    fn make_move(&self, _game_state: SnakeGame) -> SnakeAction {
+        SnakeAction::get_random_action()
     }
 
-    fn new() -> Self {
-        Self {
-            move_time: snake_model::MILLIS_BETWEEN_FRAMES * 2,
-        }
+    fn new(player_indx: usize) -> Self {
+        Self { player_indx }
     }
 
-    fn get_move_time(&self) -> u64 {
-        self.move_time
+    fn get_move_time() -> u64 {
+        snake_game::MILLIS_BETWEEN_FRAMES * 2
+    }
+
+    fn get_player_index(&self) -> usize {
+        self.player_indx
     }
 }

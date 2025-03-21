@@ -1,11 +1,16 @@
-use super::{bots::random_snake_bot::RandomBot, snake_model::SnakeBlock};
+use super::{
+    bots::random_snake_bot::RandomBot,
+    snake_game::{SnakeAction, SnakeGame},
+};
 
 pub trait SnakeBot {
-    fn new() -> Self;
+    fn new(player_indx: usize) -> Self;
 
-    fn make_move(&self, grid: Vec<Vec<SnakeBlock>>) -> (i8, i8);
+    fn get_move_time() -> u64;
 
-    fn get_move_time(&self) -> u64;
+    fn make_move(&self, game_state: SnakeGame) -> SnakeAction;
+
+    fn get_player_index(&self) -> usize;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +21,21 @@ pub enum SnakeBotType {
 // this solution doesn't scale well but the number of bot types will be small so it works
 impl SnakeBotType {
     pub const VALUES: [Self; 1] = [Self::RandomMoveBot];
+
+    /// Amount of time the bot must wait before moving again.
+    #[must_use]
+    pub fn get_move_time(&self) -> u64 {
+        match self {
+            SnakeBotType::RandomMoveBot => RandomBot::get_move_time(),
+        }
+    }
+
+    #[must_use]
+    pub fn make_new_bot(&self, player_indx: usize) -> impl SnakeBot {
+        match self {
+            SnakeBotType::RandomMoveBot => RandomBot::new(player_indx),
+        }
+    }
 }
 
 impl std::fmt::Display for SnakeBotType {
@@ -23,12 +43,5 @@ impl std::fmt::Display for SnakeBotType {
         match self {
             SnakeBotType::RandomMoveBot => write!(f, "Randomly Moving Bot"),
         }
-    }
-}
-
-#[must_use]
-pub fn make_new_bot(bot_type: &SnakeBotType) -> impl SnakeBot {
-    match bot_type {
-        SnakeBotType::RandomMoveBot => RandomBot::new(),
     }
 }

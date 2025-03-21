@@ -2,7 +2,6 @@
 
 // use crate::models::snake::snake_model::{Snake, SnakeBlock};
 
-
 // pub struct State {
 //     board: Vec<Vec<SnakeBlock>>,
 // }
@@ -122,7 +121,7 @@
 // //         env (gymnasium.Env): The environment in which to run the policy
 // //         seed (int): The seed to use
 // //         max_policy_length (int): The maximum length of the policy to run
-        
+
 // //     Returns:
 // //         list[str]: The sequence of actions that the policy performed
 // //         float: The sum total reward gained from the environment

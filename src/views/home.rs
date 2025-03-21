@@ -1,13 +1,16 @@
+//! Module containing logic for the homescreen.
+
 use iced::{
     widget::{button, column, container, text},
     Alignment, Element, Length, Subscription,
 };
-use log::debug;
+use log::{debug, warn};
 
 use crate::{app::Message, view::View};
 
 use super::snake::snake_mediator::SnakeMessage;
 
+/// Message used for information propagation in [Home].
 #[derive(Clone, Debug)]
 pub enum HomeMessage {
     Default,
@@ -15,6 +18,7 @@ pub enum HomeMessage {
 }
 
 impl HomeMessage {
+    /// Creates a new [`HomeMessage::Default`] message.
     #[must_use]
     pub fn new() -> Self {
         HomeMessage::Default
@@ -27,10 +31,12 @@ impl Default for HomeMessage {
     }
 }
 
+/// Struct representing the homescreen.
 #[derive(Debug)]
 pub struct Home {}
 
 impl Home {
+    /// Creates a new [Home] struct.
     #[must_use]
     pub fn new() -> Self {
         Self {}
@@ -39,15 +45,16 @@ impl Home {
 
 impl View for Home {
     fn update(&mut self, message: Message) -> Option<Message> {
+        debug!("New message at Home. Evaluating here.");
         if let Message::Home(message) = message {
             match message {
-                HomeMessage::Snake => {
-                    Some(Message::Snake(SnakeMessage::SnakeSelectionScreenTransition))
-                }
+                HomeMessage::Snake => Some(Message::Snake(
+                    SnakeMessage::SnakeSelectionScreenTransition((None, None)),
+                )),
                 HomeMessage::Default => Some(Message::Home(HomeMessage::Default)),
             }
         } else {
-            debug!("Received message for Home but was: {:#?}", message);
+            warn!("Received message for Home but was should not have been sent here");
             None
         }
     }
