@@ -1,4 +1,7 @@
+//! Module to store state information.
+
 use iced::{Element, Subscription};
+use log::debug;
 
 use crate::{
     view::View,
@@ -9,23 +12,25 @@ use crate::{
 };
 
 // https://docs.rs/iced/latest/i686-unknown-linux-gnu/iced/?search=command#scaling-applications
+/// A struct holding the current [Screen] of the application.
 pub struct State {
     screen: Screen,
 }
 
+/// Enum to encapsulate the [State]'s screen.
 #[derive(Debug)]
 enum Screen {
     Home(Home),
     Snake(SnakeMediator),
 }
 
+/// Enum of screen messages used to propagate information.
 #[derive(Clone, Debug)]
 pub enum Message {
     Home(HomeMessage),
     Snake(SnakeMessage),
 }
 
-// Implement `View` for `Screen`
 impl View for Screen {
     fn update(&mut self, message: Message) -> Option<Message> {
         match (self, message) {
@@ -50,6 +55,7 @@ impl View for Screen {
 }
 
 impl State {
+    /// Creates a new [State] starting at the home [Screen].
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -57,7 +63,10 @@ impl State {
         }
     }
 
+    /// Updates the state's [Screen].
+    /// Switches screens if state.screen.update returns a [Message].
     pub fn update(&mut self, message: Message) {
+        debug!("New message at App level. Sending down...");
         if let Some(next) = self.screen.update(message) {
             match next {
                 Message::Home(_) => {
@@ -70,11 +79,13 @@ impl State {
         }
     }
 
+    /// Displays the state's [Screen].
     #[must_use]
     pub fn view(&self) -> Element<Message> {
         self.screen.view()
     }
 
+    /// Subscribes to the state [Screen]'s [Subscription].
     pub fn subscription(&self) -> Subscription<Message> {
         self.screen.subscription()
     }
