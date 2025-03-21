@@ -1,9 +1,13 @@
+//! Module to handle switching between [SnakeScreen]s.
+
 use iced::{Element, Subscription};
-use log::debug;
+use log::{debug, error};
 
 use crate::{
-    app::Message, models::snake::snake_bot::SnakeBotType, view::View,
-    view_models::snake::snake_view_model::SnakeViewModel, views::home::HomeMessage,
+    app::Message,
+    view::View,
+    view_models::snake::snake_view_model::{SnakeParams, SnakeViewModel},
+    views::home::HomeMessage,
 };
 
 use super::{
@@ -13,8 +17,8 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub enum SnakeMessage {
-    SnakeGameScreenTransition(SnakeBotType),
-    SnakeSelectionScreenTransition,
+    SnakeGameScreenTransition(SnakeParams),
+    SnakeSelectionScreenTransition((Option<SnakeParams>, Option<String>)),
     HomeScreenTransition,
     SnakeGameMessage(SnakeGameMessage),
     SnakeSelectionMessage(SnakeSelectionMessage),
@@ -58,7 +62,7 @@ impl View for SnakeScreen {
 #[derive(Debug)]
 pub struct SnakeMediator {
     snake_screen: SnakeScreen,
-    key: u64,
+    key: usize,
 }
 
 impl Default for SnakeMediator {
@@ -81,19 +85,31 @@ impl View for SnakeMediator {
     fn update(&mut self, message: Message) -> Option<Message> {
         if let Message::Snake(snake_message) = message {
             match snake_message {
-                SnakeMessage::SnakeGameScreenTransition(bot_type) => {
+                SnakeMessage::SnakeGameScreenTransition(params) => {
+                    let new_vm = match SnakeViewModel::new(params.clone()) {
+                        Ok(vm) => vm,
+                        Err(e) => {
+                            error!("Error when creating Snake View Model: {:#?}", e);
+                            return Some(Message::Snake(
+                                SnakeMessage::SnakeSelectionScreenTransition((Some(params), Some(format!("Error when creating Snake View Model: {:#?}", e)))),
+                            ));
+                        }
+                    };
                     debug!("Transitioning to snake game screen");
-                    self.key += 1;
-                    self.snake_screen = SnakeScreen::SnakeGameScreen(SnakeGameScreen::new(
-                        SnakeViewModel::new(bot_type),
-                        self.key,
-                    ));
+                    self.key = self.key.wrapping_add(20);
+                    self.snake_screen =
+                        SnakeScreen::SnakeGameScreen(SnakeGameScreen::new(new_vm, self.key));
                     None
                 }
-                SnakeMessage::SnakeSelectionScreenTransition => {
+                SnakeMessage::SnakeSelectionScreenTransition((params, message)) => {
                     debug!("Transitioning to snake selection screen");
-                    self.snake_screen =
-                        SnakeScreen::SnakeSelectionScreen(SnakeSelectionScreen::new());
+                    let mut sss = if params.is_none() {
+                        SnakeSelectionScreen::new()
+                    } else {
+                        SnakeSelectionScreen::from_params(params.unwrap())
+                    };
+                    sss.add_optional_message(message);
+                    self.snake_screen = SnakeScreen::SnakeSelectionScreen(sss);
                     None
                 }
                 SnakeMessage::HomeScreenTransition => {
