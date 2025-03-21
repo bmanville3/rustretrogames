@@ -1,3 +1,5 @@
+//! Module to handle Snake selection logic.
+
 use iced::{
     alignment,
     widget::{button, column, container, pick_list, text},
@@ -9,14 +11,17 @@ use crate::{app::Message, models::snake::snake_bot::SnakeBotType, view::View};
 
 use super::snake_mediator::SnakeMessage;
 
+/// Message to propagate information in the [SnakeSelectionScreen].
 #[derive(Debug, Clone)]
 pub enum SnakeSelectionMessage {
     BotTypeSelected(SnakeBotType),
     Submit,
 }
 
+/// Struct representing the Snake selection screen.
 #[derive(Debug)]
 pub struct SnakeSelectionScreen {
+    /// [SnakeBotType] to play Snake against.
     selected_bot: Option<SnakeBotType>,
 }
 
@@ -27,6 +32,7 @@ impl Default for SnakeSelectionScreen {
 }
 
 impl SnakeSelectionScreen {
+    /// Creates a new struct with no selected [SnakeBotType].
     #[must_use]
     pub fn new() -> Self {
         Self { selected_bot: None }

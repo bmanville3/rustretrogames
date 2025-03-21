@@ -1,3 +1,5 @@
+//! Module to handle switching between [SnakeScreen]s.
+
 use iced::{Element, Subscription};
 use log::debug;
 

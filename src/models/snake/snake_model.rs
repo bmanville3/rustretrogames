@@ -10,42 +10,60 @@ pub const PLAYER_MOVEMENT_CAP: u64 = MILLIS_BETWEEN_FRAMES / 10;
 
 #[derive(Clone, Debug)]
 pub enum SnakeBlock {
-    EMPTY,
-    APPLE,
-    PLAYERONE,
-    HEADONE,
-    PLAYERTWO,
-    HEADTWO,
+    Empty,
+    Apple,
+    Snake(usize),
+    Head(usize),
+}
+
+#[derive(Clone, Debug)]
+pub enum SnakeAction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl SnakeAction {
+    pub const VARIANTS: &'static [SnakeAction] = &[Self::Up, Self::Down, Self::Left, Self::Right];
+
+    pub fn value(&self) -> (i8, i8) {
+        match self {
+            SnakeAction::Up => (-1, 0),
+            SnakeAction::Down => (1, 0),
+            SnakeAction::Left => (0, -1),
+            SnakeAction::Right => (0, 1),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Snake {
     grid: Vec<Vec<SnakeBlock>>,
-    snake_one: VecDeque<(usize, usize)>,
-    so_dir: (i8, i8),
-    so_last_move: Instant,
-    snake_two: VecDeque<(usize, usize)>,
-    st_dir: (i8, i8),
-    st_last_move: Instant,
-    size: u8,
+    num_players: u8,
+    snakes: Vec<VecDeque<(usize, usize)>>,
+    last_action: Vec<SnakeAction>,
+    time_of_last_action: Vec<Instant>,
+    board_size: u8,
     winner: u8,
 }
 
 impl Snake {
-    /// # Panics
-    ///
-    /// Will panic if size does not fit in '[u8]'.
     #[must_use]
-    pub fn new() -> Self {
-        let size = 32;
-        let mut grid: Vec<Vec<SnakeBlock>> = Vec::with_capacity(size);
-        for _ in 0..size {
-            let mut row: Vec<SnakeBlock> = Vec::with_capacity(size);
-            for _ in 0..size {
-                row.push(SnakeBlock::EMPTY);
+    pub fn new(num_players: u8, board_size: u8) -> Self {
+        let mut grid: Vec<Vec<SnakeBlock>> = Vec::with_capacity(usize::from(board_size));
+        for _ in 0..board_size {
+            let mut row: Vec<SnakeBlock> = Vec::with_capacity(usize::from(board_size));
+            for _ in 0..board_size {
+                row.push(SnakeBlock::Empty);
             }
             grid.push(row);
         }
+        for i in 0..num_players {
+            let mut snake = VecDeque::new();
+            
+        }
+
         let mut snake_one = VecDeque::new();
         let player_one_loc = size / 4;
         grid[player_one_loc + 3][player_one_loc + 3] = SnakeBlock::APPLE;

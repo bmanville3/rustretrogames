@@ -1,3 +1,5 @@
+//! Module containing logic for the homescreen.
+
 use iced::{
     widget::{button, column, container, text},
     Alignment, Element, Length, Subscription,
@@ -8,6 +10,7 @@ use crate::{app::Message, view::View};
 
 use super::snake::snake_mediator::SnakeMessage;
 
+/// Message used for information propagation in [Home].
 #[derive(Clone, Debug)]
 pub enum HomeMessage {
     Default,
@@ -15,6 +18,7 @@ pub enum HomeMessage {
 }
 
 impl HomeMessage {
+    /// Creates a new [HomeMessage::Default] message. 
     #[must_use]
     pub fn new() -> Self {
         HomeMessage::Default
@@ -27,10 +31,12 @@ impl Default for HomeMessage {
     }
 }
 
+/// Struct representing the homescreen.
 #[derive(Debug)]
 pub struct Home {}
 
 impl Home {
+    /// Creates a new [Home] struct.
     #[must_use]
     pub fn new() -> Self {
         Self {}
