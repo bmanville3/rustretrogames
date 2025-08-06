@@ -1,25 +1,18 @@
 use std::{
-    cmp::max,
-    thread,
-    time::{Duration, Instant},
+    collections::HashMap,
+    sync::mpsc::{self, Receiver, Sender},
+    time::Duration,
 };
 
-use iced::{
-    futures::{
-        channel::mpsc::{self, Sender},
-        SinkExt, Stream, StreamExt,
-    },
-    keyboard::{key::Named, Key},
-    stream,
-};
+use iced::keyboard::{key::Named, Key};
 use log::{debug, error, warn};
+use tokio::{runtime::Handle, task::JoinHandle};
 
 use crate::{
     app::Message,
     models::snake::{
         snake_bot::{SnakeBot, SnakeBotType},
-        snake_game::{self, SnakeAction, SnakeError, SnakeGame},
-        snake_player::SnakePlayer,
+        snake_game::{PartialSnakeGame, SnakeAction, SnakeError, SnakeGame, MILLIS_BETWEEN_FRAMES},
     },
     view_model::ViewModel,
     views::snake::{snake_game_screen::SnakeGameMessage, snake_mediator::SnakeMessage},
@@ -35,19 +28,25 @@ pub struct SnakeParams {
 
 #[derive(Clone, Debug)]
 pub enum ChannelMessage {
-    BotReady((usize, mpsc::Sender<ChannelMessage>)),
-    Input(SnakeGame),
-    Idle(u64),
-    BotMove((usize, SnakeAction, mpsc::Sender<ChannelMessage>)),
+    GetGame(Sender<ChannelMessage>),
+    Game(SnakeGame),
+    MoveRealPlayer((usize, SnakeAction)),
+    TickBoard,
+    BotReady(usize),
+    Input(PartialSnakeGame),
+    BotMove((usize, SnakeAction)),
     Kill,
 }
 
 #[derive(Debug)]
 pub struct SnakeViewModel {
-    model: SnakeGame,
     params: SnakeParams,
+    sender_to_main_loop: Sender<ChannelMessage>,
+    main_handle: JoinHandle<()>,
+    last_model_fetched: SnakeGame,
     real_player_1_index: Option<usize>,
     real_player_2_index: Option<usize>,
+    game_over: bool,
 }
 
 impl SnakeViewModel {
@@ -59,40 +58,194 @@ impl SnakeViewModel {
     /// be created, returns a [`SnakeError`].
     pub fn new(params: SnakeParams) -> Result<Self, SnakeError> {
         debug!("New SnakeViewModel params: {:#?}", params);
+        let number_of_real_players = params.number_of_real_players;
         let model = SnakeGame::new(
             params.number_of_bots,
-            params.number_of_real_players,
+            number_of_real_players,
             params.grid_size,
         )?;
         let mut real_player_1_index = None;
         let mut real_player_2_index = None;
+        let mut bot_threads = HashMap::with_capacity(params.number_of_bots * 2);
+        let (sender_to_main_loop, receiver_for_main_loop) = mpsc::channel::<ChannelMessage>();
         for s in model.get_all_players() {
-            if !s.is_bot {
-                if real_player_1_index.is_none() {
-                    real_player_1_index = Some(s.player_id);
-                } else {
-                    real_player_2_index = Some(s.player_id);
-                    break;
-                }
+            if s.is_bot {
+                bot_threads.insert(
+                    s.player_id,
+                    Self::make_bot_thread(
+                        &params.bot_type,
+                        s.player_id,
+                        sender_to_main_loop.clone(),
+                    ),
+                );
+            } else if real_player_1_index.is_none() {
+                real_player_1_index = Some(s.player_id);
+            } else {
+                real_player_2_index = Some(s.player_id);
             }
         }
         Ok(Self {
-            model,
             params,
+            sender_to_main_loop,
+            main_handle: Self::main_loop(
+                model.clone(),
+                bot_threads,
+                receiver_for_main_loop,
+                real_player_1_index,
+                real_player_2_index,
+                number_of_real_players,
+            ),
+            last_model_fetched: model,
             real_player_1_index,
             real_player_2_index,
+            game_over: false,
         })
     }
 
-    // not the most scalable but number of types will remain small
     #[must_use]
-    pub fn get_all_bot_types() -> [SnakeBotType; 1] {
-        SnakeBotType::VALUES
+    pub fn main_loop(
+        mut model: SnakeGame,
+        mut bot_threads: HashMap<usize, (JoinHandle<()>, Sender<ChannelMessage>)>,
+        receiver_for_main_loop: Receiver<ChannelMessage>,
+        real_player_1_index: Option<usize>,
+        real_player_2_index: Option<usize>,
+        number_of_real_players: usize,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut errors_in_a_row = 0;
+            loop {
+                let input = receiver_for_main_loop.recv();
+                if input.is_ok() {
+                    errors_in_a_row = 0;
+                    let message = input.unwrap();
+                    match message {
+                        ChannelMessage::BotReady(pindx) => {
+                            let bot = if let Some(b) = model.get_all_players().get(pindx) {
+                                b
+                            } else {
+                                error!("Got pindx {pindx} but no bot found there");
+                                continue;
+                            };
+                            if bot.is_dead()
+                                || Self::game_over_inner(
+                                    &model,
+                                    real_player_1_index,
+                                    real_player_2_index,
+                                    number_of_real_players,
+                                )
+                            {
+                                if let Some((handle, sender)) = bot_threads.remove(&pindx) {
+                                    Self::kill_in_time(150, handle, &sender);
+                                } else {
+                                    debug!("Could not get threads for bot {} to kill", pindx);
+                                    debug!(
+                                        "Number of remaining bot threads: {}",
+                                        bot_threads.len()
+                                    );
+                                }
+                                continue;
+                            }
+                            let (_, sender) = bot_threads.get(&pindx).unwrap();
+                            let partial = PartialSnakeGame::from_full(model.clone());
+                            if let Err(e) = sender.send(ChannelMessage::Input(partial)) {
+                                debug!("Problem sending input message: {e}");
+                            }
+                        }
+                        ChannelMessage::BotMove((pindx, action)) => {
+                            let bot = if let Some(b) = model.get_all_players().get(pindx) {
+                                b
+                            } else {
+                                error!("Got pindx {pindx} but no bot found there");
+                                continue;
+                            };
+                            if bot.is_dead()
+                                || Self::game_over_inner(
+                                    &model,
+                                    real_player_1_index,
+                                    real_player_2_index,
+                                    number_of_real_players,
+                                )
+                            {
+                                if let Some((handle, sender)) = bot_threads.remove(&pindx) {
+                                    Self::kill_in_time(150, handle, &sender);
+                                    debug!(
+                                        "Number of remaining bot threads: {}",
+                                        bot_threads.len()
+                                    );
+                                } else {
+                                    debug!("Could not get threads for bot {} to kill", pindx);
+                                }
+                                continue;
+                            }
+                            model.add_move_to_snake(pindx, action);
+                        }
+                        ChannelMessage::Kill => {
+                            debug!("Killing main loop");
+                            for (handle, sender) in bot_threads.into_values() {
+                                Self::kill_in_time(150, handle, &sender);
+                            }
+                            break;
+                        }
+                        ChannelMessage::MoveRealPlayer((pindx, action)) => {
+                            model.add_move_to_snake(pindx, action);
+                        }
+                        ChannelMessage::TickBoard => {
+                            model.move_all_characters();
+                        }
+                        ChannelMessage::GetGame(sender) => {
+                            if let Err(e) = sender.send(ChannelMessage::Game(model.clone())) {
+                                error!("Problem sending model back: {:#?}", e);
+                            }
+                        }
+                        unknown => {
+                            error!(
+                                "Unexpected channel message received in main loop: {:#?}",
+                                unknown
+                            );
+                        }
+                    }
+                } else {
+                    errors_in_a_row += 1;
+                    error!(
+                        "Error receiving message in main loop.: {:#?}",
+                        input.unwrap_err()
+                    );
+                    if errors_in_a_row > 3 {
+                        error!("Received {errors_in_a_row} errors in a row. Quitting");
+                        break;
+                    }
+                }
+            }
+        })
+    }
+
+    fn kill_in_time(millis: u64, mut handle: JoinHandle<()>, sender: &Sender<ChannelMessage>) {
+        debug!("Killing a thread in {millis} millisonds or aborting");
+        if let Err(e) = sender.send(ChannelMessage::Kill) {
+            error!("Error sending kill message: {:#?}", e);
+        }
+        tokio::task::block_in_place(|| {
+            let rt_handle = Handle::current();
+            rt_handle.block_on(async {
+                if let Err(e) =
+                    tokio::time::timeout(Duration::from_millis(millis), &mut handle).await
+                {
+                    error!("Error closing thread in time. Forcing abort: {:#?}", e);
+                    handle.abort();
+                }
+            });
+        });
     }
 
     /// Makes a new bot thread responsbile for controlling the bot at `player_indx`.
-    pub fn make_bot_thread(&self, player_indx: usize) -> impl Stream<Item = Message> {
-        let bot = if let Some(bt) = &self.params.bot_type {
+    #[must_use]
+    pub fn make_bot_thread(
+        bot_type: &Option<SnakeBotType>,
+        player_indx: usize,
+        sender_to_view_model: Sender<ChannelMessage>,
+    ) -> (JoinHandle<()>, Sender<ChannelMessage>) {
+        debug!("New bot thread for player {player_indx}");
+        let bot = if let Some(bt) = bot_type {
             bt.make_new_bot(player_indx)
         } else {
             error!(
@@ -100,202 +253,79 @@ impl SnakeViewModel {
             );
             SnakeBotType::RandomMoveBot.make_new_bot(player_indx)
         };
-        stream::channel(100, |mut output| async move {
-            let (sender, mut receiver) = mpsc::channel::<ChannelMessage>(100);
-            match output
-                .send(Message::Snake(SnakeMessage::SnakeGameMessage(
-                    SnakeGameMessage::ChannelMessage(ChannelMessage::BotReady((
-                        bot.get_player_index(),
-                        sender.clone(),
-                    ))),
-                )))
-                .await
-            {
-                Ok(()) => (),
-                Err(e) => {
-                    error!("Problem sending BotReady message: {}", e);
-                    return;
-                }
-            }
+        let (sender_to_bot, receiver_for_bot) = mpsc::channel::<ChannelMessage>();
+        let bot_handle = tokio::spawn(async move {
+            let mut send_errors_in_a_row = 0;
+            let mut recv_errors_in_a_row = 0;
             loop {
-                let input = receiver.next().await;
-                if let Some(message) = input {
+                while let Err(e) =
+                    sender_to_view_model.send(ChannelMessage::BotReady(bot.get_player_index()))
+                {
+                    send_errors_in_a_row += 1;
+                    error!("Problem sending BotReady message: {}", e);
+                    if send_errors_in_a_row > 3 {
+                        break;
+                    }
+                }
+                if send_errors_in_a_row > 3 {
+                    error!("Could not send bot read message. Quitting bot thread {player_indx}");
+                    break;
+                } else {
+                    send_errors_in_a_row = 0;
+                }
+                let input = receiver_for_bot.recv();
+                if input.is_ok() {
+                    let message = input.unwrap();
                     match message {
                         ChannelMessage::Input(snake_game) => {
-                            match output
-                                .send(Message::Snake(SnakeMessage::SnakeGameMessage(
-                                    SnakeGameMessage::ChannelMessage(ChannelMessage::BotMove((
-                                        bot.get_player_index(),
-                                        bot.make_move(snake_game),
-                                        sender.clone(),
-                                    ))),
-                                )))
-                                .await
-                            {
-                                Ok(()) => (),
-                                Err(e) => {
-                                    debug!("Problem sending BotMove message: {}", e);
-                                }
+                            if let Err(e) = sender_to_view_model.send(ChannelMessage::BotMove((
+                                bot.get_player_index(),
+                                bot.make_move(snake_game),
+                            ))) {
+                                error!("Problem sending BotMove message: {}", e);
                             }
                         }
-                        ChannelMessage::Idle(millis) => {
-                            thread::sleep(Duration::from_millis(millis));
-                        }
                         ChannelMessage::Kill => break,
-                        _ => (),
-                    }
-                    match output
-                        .send(Message::Snake(SnakeMessage::SnakeGameMessage(
-                            SnakeGameMessage::ChannelMessage(ChannelMessage::BotReady((
-                                bot.get_player_index(),
-                                sender.clone(),
-                            ))),
-                        )))
-                        .await
-                    {
-                        Ok(()) => (),
-                        Err(e) => {
-                            debug!("Problem sending BotReady message: {}", e);
+                        other => {
+                            error!("Received unkown message in bot thread: {:#?}", other);
                         }
                     }
                 } else {
-                    debug!("Got None in receiver. Breaking...");
-                    break;
-                }
-            }
-        })
-    }
-
-    fn kill_bot(pindx: usize, mut sender: Sender<ChannelMessage>) {
-        debug!("Killing bot {}", pindx);
-        tokio::spawn(async move {
-            if let Err(e) = sender.send(ChannelMessage::Kill).await {
-                debug!("Problem sending kill message to {pindx}: {e}");
-            }
-        });
-    }
-
-    fn check_bot_ready(&self, pindx: usize, mut sender: Sender<ChannelMessage>) -> bool {
-        if self.params.bot_type.is_none() {
-            warn!("Tried to check if bot is ready when no bot type is selected");
-            return false;
-        }
-        let Some(player) = self.model.get_player(pindx) else {
-            error!("Player at index {} not found", pindx);
-            return false;
-        };
-        if self.game_over() || player.is_dead() {
-            Self::kill_bot(pindx, sender.clone());
-            return false;
-        }
-
-        let time_between_moves = u128::from(max(
-            snake_game::PLAYER_MOVEMENT_CAP,
-            self.params.bot_type.as_ref().unwrap().get_move_time(),
-        ));
-
-        if !player.is_bot {
-            error!(
-                "Player at index {} was expected to be a bot. Player name: {}",
-                pindx,
-                player.get_name()
-            );
-            return false;
-        }
-
-        let millis_diff = Instant::now()
-            .duration_since(player.time_of_last_action)
-            .as_millis();
-
-        let max_wait = time_between_moves.saturating_sub(millis_diff);
-
-        if max_wait == 0 {
-            return true;
-        }
-        // have the bot idle for max_wait time
-        tokio::spawn(async move {
-            match max_wait.try_into() {
-                Ok(wait) => {
-                    if let Err(e) = sender.send(ChannelMessage::Idle(wait)).await {
-                        debug!("Problem sending idle message: {e}");
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "Problem converting u128 to u64: {}. Sending default wait",
-                        e
-                    );
-                    if let Err(e) = sender
-                        .send(ChannelMessage::Idle(snake_game::MILLIS_BETWEEN_FRAMES))
-                        .await
-                    {
-                        debug!("Problem sending idle message: {e}");
+                    recv_errors_in_a_row += 1;
+                    error!("Error getting message: {:#?}", input.unwrap_err());
+                    if recv_errors_in_a_row > 3 {
+                        error!("Bot {player_indx} could not receive 3 times in a row. Quitting");
+                        break;
+                    } else {
+                        recv_errors_in_a_row = 0;
                     }
                 }
             }
         });
-        false
+        (bot_handle, sender_to_bot)
     }
 
-    fn handle_channel_message(&mut self, message: ChannelMessage) {
-        match message {
-            ChannelMessage::BotReady((pindx, sender)) => {
-                if self.check_bot_ready(pindx, sender.clone()) {
-                    let mut csend = sender;
-                    let model = self.model.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = csend.send(ChannelMessage::Input(model)).await {
-                            debug!("Problem sending input message: {e}");
-                        }
-                    });
+    fn get_game_copy(&self) -> Option<SnakeGame> {
+        let (sender, receiver) = mpsc::channel::<ChannelMessage>();
+        if let Err(e) = self
+            .sender_to_main_loop
+            .send(ChannelMessage::GetGame(sender))
+        {
+            error!("Problem sending to main loop: {:#?}", e);
+        }
+        let input = receiver.recv();
+        if input.is_ok() {
+            match input.unwrap() {
+                ChannelMessage::Game(snake_game) => Some(snake_game),
+                unknown => {
+                    error!("Got unexpected message from get_game_copy: {:#?}", unknown);
+                    None
                 }
             }
-            ChannelMessage::BotMove((pindx, action, sender)) => {
-                if self.check_bot_ready(pindx, sender.clone())
-                    && !self
-                        .model
-                        .move_character(pindx, action, Some(Instant::now()), false)
-                {
-                    Self::kill_bot(pindx, sender);
-                }
-            }
-            cm => {
-                debug!("Ignoring unexpected channel message: {:#?}", cm);
-            }
+        } else {
+            error!("Problem getting game board: {:#?}", input.unwrap_err());
+            None
         }
-    }
-
-    #[must_use]
-    pub fn get_game_ref(&self) -> &SnakeGame {
-        &self.model
-    }
-
-    #[must_use]
-    pub fn get_winner_indx(&self) -> Option<usize> {
-        self.model.get_winner()
-    }
-
-    #[must_use]
-    pub fn get_winner(&self) -> Option<&SnakePlayer> {
-        match self.get_winner_indx() {
-            Some(wi) => self.model.get_player(wi),
-            None => None,
-        }
-    }
-
-    #[must_use]
-    pub fn get_time_between_frames(&self) -> u64 {
-        snake_game::MILLIS_BETWEEN_FRAMES
-    }
-
-    #[must_use]
-    pub fn get_number_of_players(&self) -> usize {
-        self.model.get_all_players().len()
-    }
-
-    #[must_use]
-    pub fn get_players(&self) -> &Vec<SnakePlayer> {
-        self.model.get_all_players()
     }
 
     #[must_use]
@@ -304,25 +334,43 @@ impl SnakeViewModel {
     }
 
     #[must_use]
-    pub fn real_players_lost(&self) -> bool {
+    pub fn get_last_game_board_ref(&self) -> &SnakeGame {
+        &self.last_model_fetched
+    }
+
+    #[must_use]
+    pub fn get_number_of_players(&self) -> usize {
+        self.params.number_of_bots + self.params.number_of_real_players
+    }
+
+    #[must_use]
+    pub fn get_time_between_frames(&self) -> u64 {
+        MILLIS_BETWEEN_FRAMES
+    }
+
+    #[must_use]
+    pub fn real_players_lost_inner(
+        model: &SnakeGame,
+        rp1_indx: Option<usize>,
+        rp2_indx: Option<usize>,
+        number_of_real_players: usize,
+    ) -> bool {
         // either no real players or only real players -> real players never lose
-        if self.params.number_of_real_players == 0
-            || self.params.number_of_real_players == self.get_number_of_players()
-        {
+        if number_of_real_players == 0 || number_of_real_players == model.get_all_players().len() {
             return false;
         }
-        let sp1_opt = if let Some(indx1) = self.real_player_1_index {
-            self.model.get_player(indx1)
+        let sp1_opt = if let Some(indx1) = rp1_indx {
+            model.get_player(indx1)
         } else {
             error!("Tried to get the first real player index but wasn't present");
             return false;
         };
         if let Some(sp1) = sp1_opt {
-            if self.params.number_of_real_players == 1 {
+            if number_of_real_players == 1 {
                 return sp1.is_dead();
             }
-            let sp2_opt = if let Some(indx1) = self.real_player_1_index {
-                self.model.get_player(indx1)
+            let sp2_opt = if let Some(indx2) = rp2_indx {
+                model.get_player(indx2)
             } else {
                 error!("Tried to get the second real player index but wasn't present");
                 return sp1.is_dead();
@@ -335,30 +383,56 @@ impl SnakeViewModel {
             }
         } else {
             error!("First real player was None");
-            true
+            false
         }
     }
 
     #[must_use]
+    pub fn real_players_lost(&self) -> bool {
+        Self::real_players_lost_inner(
+            &self.last_model_fetched,
+            self.real_player_1_index,
+            self.real_player_2_index,
+            self.get_number_of_players(),
+        )
+    }
+
+    fn game_over_inner(
+        model: &SnakeGame,
+        rp1_indx: Option<usize>,
+        rp2_indx: Option<usize>,
+        number_of_real_players: usize,
+    ) -> bool {
+        Self::real_players_lost_inner(model, rp1_indx, rp2_indx, number_of_real_players)
+            || model.get_winner().is_some()
+    }
+
+    #[must_use]
     pub fn game_over(&self) -> bool {
-        self.real_players_lost() || self.get_winner().is_some()
+        if self.game_over {
+            true
+        } else {
+            Self::game_over_inner(
+                &self.last_model_fetched,
+                self.real_player_1_index,
+                self.real_player_2_index,
+                self.params.number_of_real_players,
+            )
+        }
     }
 }
 
 impl ViewModel for SnakeViewModel {
     fn update(&mut self, message: Message) -> Option<Message> {
+        // check if game over is cached to true
         if let Message::Snake(snake_message) = message {
             if let SnakeMessage::SnakeGameMessage(snake_game_message) = snake_message {
                 match snake_game_message {
-                    SnakeGameMessage::ChannelMessage(channel_message) => {
-                        self.handle_channel_message(channel_message);
-                        None
-                    }
                     SnakeGameMessage::Key(key) => {
-                        if self.game_over() {
+                        if self.game_over {
                             if matches!(key, Key::Named(Named::Space)) {
                                 return Some(Message::Snake(SnakeMessage::SnakeGameMessage(
-                                    SnakeGameMessage::Reset(true),
+                                    SnakeGameMessage::Reset,
                                 )));
                             }
                             return None;
@@ -372,7 +446,6 @@ impl ViewModel for SnakeViewModel {
                         } else {
                             rp1i
                         };
-                        // TODO: Check the time of both players
                         let movement = match key {
                             Key::Named(code) => match code {
                                 Named::ArrowUp => Some((rp1i, SnakeAction::Up)),
@@ -392,35 +465,54 @@ impl ViewModel for SnakeViewModel {
                         };
 
                         if let Some((pindx, action)) = movement {
-                            self.model
-                                .move_character(pindx, action, Some(Instant::now()), false);
+                            if let Err(e) = self
+                                .sender_to_main_loop
+                                .send(ChannelMessage::MoveRealPlayer((pindx, action)))
+                            {
+                                error!("Error sending move real player: {:#?}", e);
+                            }
                         }
                         None
                     }
                     SnakeGameMessage::Timer(_) => {
-                        if self.game_over() {
+                        if self.game_over {
                             return None;
                         }
-                        let pids_and_last_actions: Vec<(usize, SnakeAction)> = self
-                            .model
-                            .get_all_players()
-                            .iter()
-                            .filter(|p| p.is_alive())
-                            .map(|p| (p.player_id, p.last_action.clone()))
-                            .collect();
-                        for (pid, last_action) in pids_and_last_actions {
-                            self.model.move_character(pid, last_action, None, true);
+                        if let Err(e) = self.sender_to_main_loop.send(ChannelMessage::TickBoard) {
+                            error!("Error sending tick board: {:#?}", e);
                         }
+                        self.last_model_fetched = if let Some(new_game) = self.get_game_copy() {
+                            new_game
+                        } else {
+                            self.last_model_fetched.clone()
+                        };
+                        self.game_over = self.game_over();
                         None
                     }
-                    SnakeGameMessage::Reset(reset) => {
-                        if reset {
-                            Some(Message::Snake(SnakeMessage::SnakeGameScreenTransition(
-                                self.params.clone(),
-                            )))
-                        } else {
-                            None
+                    SnakeGameMessage::Reset => {
+                        if let Err(e) = self.sender_to_main_loop.send(ChannelMessage::Kill) {
+                            error!("Error sending kill message to main: {:#?}", e);
                         }
+                        tokio::task::block_in_place(|| {
+                            let rt_handle = Handle::current();
+                            rt_handle.block_on(async {
+                                if let Err(e) = tokio::time::timeout(
+                                    Duration::from_secs(2),
+                                    &mut self.main_handle,
+                                )
+                                .await
+                                {
+                                    error!(
+                                        "Error closing main loop in time. Forcing abort: {:#?}",
+                                        e
+                                    );
+                                    self.main_handle.abort();
+                                }
+                            });
+                        });
+                        Some(Message::Snake(SnakeMessage::SnakeGameScreenTransition(
+                            self.params.clone(),
+                        )))
                     }
                 }
             } else {

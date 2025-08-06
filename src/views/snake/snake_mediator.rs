@@ -83,7 +83,6 @@ impl SnakeMediator {
 
 impl View for SnakeMediator {
     fn update(&mut self, message: Message) -> Option<Message> {
-        debug!("Received message in SnakeMediator. Evaluating here.");
         if let Message::Snake(snake_message) = message {
             match snake_message {
                 SnakeMessage::SnakeGameScreenTransition(params) => {
@@ -101,8 +100,7 @@ impl View for SnakeMediator {
                         }
                     };
                     self.key += 1;
-                    self.snake_screen =
-                        SnakeScreen::SnakeGameScreen(SnakeGameScreen::new(new_vm, self.key));
+                    self.snake_screen = SnakeScreen::SnakeGameScreen(SnakeGameScreen::new(new_vm));
                     None
                 }
                 SnakeMessage::SnakeSelectionScreenTransition((params, message)) => {
@@ -121,7 +119,6 @@ impl View for SnakeMediator {
                     Some(Message::Home(HomeMessage::Default))
                 }
                 _ => {
-                    debug!("Received message at SnakeMediator. Sending down...");
                     // the basic idea of the following code is we do the normal update with the screen
                     // if we need to transition away from the screen though, we call update on ourselves
                     // with the transition as this module is used to transition between screens

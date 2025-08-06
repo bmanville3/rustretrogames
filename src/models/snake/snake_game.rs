@@ -6,7 +6,7 @@ use rand::{seq::SliceRandom, Rng};
 use super::snake_player::SnakePlayer;
 
 /// Amount of time before snake is forced to move.
-pub const MILLIS_BETWEEN_FRAMES: u64 = 300;
+pub const MILLIS_BETWEEN_FRAMES: u64 = 150;
 /// Cap of how fast a player can make consecutive moves.
 pub const PLAYER_MOVEMENT_CAP: u64 = MILLIS_BETWEEN_FRAMES / 10;
 
@@ -248,12 +248,11 @@ impl SnakeGame {
     /// # Panics
     ///
     /// Panics if the player's snake is empty or type conversions fail.
-    pub fn move_character(
+    fn move_character(
         &mut self,
         snake_indx: usize,
         action: SnakeAction,
         new_time: Option<Instant>,
-        allow_same_direction: bool,
     ) -> bool {
         if self.winner.is_some() {
             debug!("Trid to move snake {} after winner found", snake_indx);
@@ -278,9 +277,7 @@ impl SnakeGame {
                 return false;
             }
             let delta = action.value();
-            if (!allow_same_direction && delta == snake.last_action.value())
-                || action.get_opposite().value() == snake.last_action.value()
-            {
+            if action.get_opposite().value() == snake.last_action.value() {
                 return true;
             }
 
@@ -339,6 +336,30 @@ impl SnakeGame {
         true
     }
 
+    pub fn move_all_characters(&mut self) {
+        if self.get_winner().is_some() {
+            return;
+        }
+        let ids_and_actions: Vec<(usize, SnakeAction)> = self
+            .snakes
+            .iter_mut()
+            .filter(|s| s.is_alive())
+            .map(|s| (s.player_id, s.pop_next_move()))
+            .collect();
+        for i in 0..ids_and_actions.len() {
+            let id = ids_and_actions[i].0;
+            let action = &ids_and_actions[i].1;
+            self.move_character(id, action.clone(), Some(Instant::now()));
+            if self.get_winner().is_some() {
+                return;
+            }
+        }
+    }
+
+    pub fn add_move_to_snake(&mut self, snake_indx: usize, action: SnakeAction) -> bool {
+        self.snakes[snake_indx].push_move(action)
+    }
+
     #[must_use]
     pub fn get_winner(&self) -> Option<usize> {
         self.winner
@@ -373,5 +394,29 @@ impl SnakeGame {
 impl Default for SnakeGame {
     fn default() -> Self {
         Self::new(3, 1, MAX_BOARD_SIZE).unwrap()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PartialSnakeGame {
+    pub grid: Vec<Vec<SnakeBlock>>,
+    pub snake_heads: Vec<Option<(usize, usize)>>,
+    pub last_movements: Vec<(i8, i8)>,
+}
+
+impl PartialSnakeGame {
+    #[must_use]
+    pub fn from_full(game: SnakeGame) -> Self {
+        let mut snake_heads = Vec::new();
+        let mut last_movements = Vec::new();
+        for snake in game.snakes {
+            snake_heads.push(snake.get_head());
+            last_movements.push(snake.last_action.value());
+        }
+        Self {
+            grid: game.grid,
+            snake_heads,
+            last_movements,
+        }
     }
 }

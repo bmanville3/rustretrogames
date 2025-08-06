@@ -3,43 +3,41 @@ use std::time::{Duration, Instant};
 use iced::{
     keyboard::{self, Key},
     time,
-    widget::{button, column, container, row, text, Column, Row},
+    widget::{button, column, container, row, text, Column, Container, Row},
     Border, Color, Element, Length, Subscription,
 };
-use log::debug;
 
 use crate::{
-    app::Message,
-    models::snake::snake_game::SnakeBlock,
-    view::View,
-    view_model::ViewModel,
-    view_models::snake::snake_view_model::{ChannelMessage, SnakeViewModel},
+    app::Message, models::snake::snake_game::SnakeBlock, view::View, view_model::ViewModel,
+    view_models::snake::snake_view_model::SnakeViewModel,
 };
 
 use super::snake_mediator::SnakeMessage;
 
 #[derive(Clone, Debug)]
 pub enum SnakeGameMessage {
-    ChannelMessage(ChannelMessage),
     Key(Key),
     Timer(Instant),
-    Reset(bool),
+    Reset,
 }
 
 #[derive(Debug)]
 pub struct SnakeGameScreen {
     view_model: SnakeViewModel,
-    sub_key: usize,
-    needs_reset: bool,
+    cell_size: u16,
 }
 
 impl SnakeGameScreen {
     #[must_use]
-    pub fn new(view_model: SnakeViewModel, sub_key: usize) -> Self {
+    pub fn new(view_model: SnakeViewModel) -> Self {
+        let cell_size = if view_model.get_last_game_board_ref().get_size() < 30 {
+            20
+        } else {
+            16
+        };
         Self {
             view_model,
-            sub_key,
-            needs_reset: true,
+            cell_size,
         }
     }
 
@@ -56,61 +54,53 @@ impl SnakeGameScreen {
         }
         Color::from_rgba(red, green, blue, alpha)
     }
+
+    fn make_container(&self, content: String, color: Color) -> Container<'_, Message> {
+        container(
+            text(content)
+                .color(Color::BLACK)
+                .size(self.cell_size * 4 / 5),
+        )
+        .width(self.cell_size)
+        .height(self.cell_size)
+        .style(move |_: &_| container::Style {
+            // TODO Fix this
+            border: Border {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                width: 1.0,
+                ..Default::default()
+            },
+            background: Some(color.into()),
+            ..container::Style::default()
+        })
+    }
 }
 
 impl View for SnakeGameScreen {
     fn update(&mut self, message: Message) -> Option<Message> {
-        debug!("Received message at SnakeGameScreen. Evaluating here.");
-        if let Message::Snake(SnakeMessage::SnakeGameMessage(SnakeGameMessage::Reset(r))) = message
-        {
-            debug!("Turning need reset to {r}");
-            self.needs_reset = r;
-        }
         self.view_model.update(message)
     }
 
     fn view(&self) -> Element<Message> {
         let mut grid_view = Column::new();
-        let cell_size = if self.view_model.get_game_ref().get_size() < 30 {
-            20
-        } else {
-            16
-        };
 
-        let make_container = |content: String, color: Color| {
-            container(text(content).color(Color::BLACK).size(cell_size * 4 / 5))
-                .width(cell_size)
-                .height(cell_size)
-                .style(move |_: &_| container::Style {
-                    // TODO Fix this
-                    border: Border {
-                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
-                        width: 1.0,
-                        ..Default::default()
-                    },
-                    background: Some(color.into()),
-                    ..container::Style::default()
-                })
-        };
-
-        let game = self.view_model.get_game_ref();
-        let grid = game.get_grid();
+        let snake_game = self.view_model.get_last_game_board_ref();
+        let grid = snake_game.get_grid();
         for grid_row in grid {
             let mut row = Row::new();
             for entry in grid_row {
                 let rectangle = match entry {
-                    SnakeBlock::Empty => make_container(" ".to_owned(), Color::WHITE),
+                    SnakeBlock::Empty => self.make_container(" ".to_owned(), Color::WHITE),
                     SnakeBlock::Apple => {
-                        make_container(" ".to_owned(), Color::from_rgb(1.0, 0.0, 0.0))
+                        self.make_container(" ".to_owned(), Color::from_rgb(1.0, 0.0, 0.0))
                     }
                     // TODO: Give the snakes head pointing the correct direction by using the whole game info
-                    SnakeBlock::SnakeBody(player) => {
-                        make_container(" ".to_owned(), self.get_color_for_player(*player, 0.83))
-                    }
-                    SnakeBlock::SnakeHead(player) => make_container(
+                    SnakeBlock::SnakeBody(player) => self
+                        .make_container(" ".to_owned(), self.get_color_for_player(*player, 0.83)),
+                    SnakeBlock::SnakeHead(player) => self.make_container(
                         format!(
                             "{}{}",
-                            if self.view_model.get_players()[*player].is_bot {
+                            if snake_game.get_all_players()[*player].is_bot {
                                 "B"
                             } else {
                                 "P"
@@ -141,7 +131,7 @@ impl View for SnakeGameScreen {
             .height(40);
         let restart_button = button(text("Restart"))
             .on_press(Message::Snake(SnakeMessage::SnakeGameMessage(
-                SnakeGameMessage::Reset(true),
+                SnakeGameMessage::Reset,
             )))
             .width(80)
             .height(40);
@@ -157,12 +147,19 @@ impl View for SnakeGameScreen {
         .height(Length::Fill)
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center);
-        let winner = self.view_model.get_winner();
+        let winner = snake_game.get_winner();
         if winner.is_some() {
             return column!(
                 game,
                 if self.view_model.get_number_of_players() > 1 {
-                    text(format!("GAME OVER. {} WON!", winner.unwrap().get_name()))
+                    text(format!(
+                        "GAME OVER. {} WON!",
+                        snake_game
+                            .get_all_players()
+                            .get(winner.unwrap())
+                            .unwrap()
+                            .get_name()
+                    ))
                 } else {
                     text("GAME OVER")
                 }
@@ -183,34 +180,12 @@ impl View for SnakeGameScreen {
                 SnakeGameMessage::Key(key),
             )))
         });
-        if self.view_model.game_over() {
-            return keyboard;
-        }
-        if self.needs_reset {
-            // if there is a winner drop all subscriptions (as the game is over)
-            debug!("Reseting Subscription");
-            return time::every(Duration::from_millis(10))
-                .map(|_| SnakeGameMessage::Reset(false))
-                .map(SnakeMessage::SnakeGameMessage)
-                .map(Message::Snake);
-        }
         let timer = time::every(Duration::from_millis(
             self.view_model.get_time_between_frames(),
         ))
         .map(SnakeGameMessage::Timer)
         .map(SnakeMessage::SnakeGameMessage)
         .map(Message::Snake);
-        let mut sub = Subscription::batch(vec![timer, keyboard]);
-        for player in self.view_model.get_players() {
-            if !player.is_bot {
-                continue;
-            }
-            let bot = Subscription::run_with_id(
-                self.sub_key.wrapping_add(player.player_id + 1),
-                self.view_model.make_bot_thread(player.player_id),
-            );
-            sub = Subscription::batch(vec![sub, bot]);
-        }
-        sub
+        Subscription::batch(vec![timer, keyboard])
     }
 }

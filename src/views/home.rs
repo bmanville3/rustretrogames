@@ -4,7 +4,7 @@ use iced::{
     widget::{button, column, container, text},
     Alignment, Element, Length, Subscription,
 };
-use log::{debug, warn};
+use log::warn;
 
 use crate::{app::Message, view::View};
 
@@ -45,7 +45,6 @@ impl Home {
 
 impl View for Home {
     fn update(&mut self, message: Message) -> Option<Message> {
-        debug!("New message at Home. Evaluating here.");
         if let Message::Home(message) = message {
             match message {
                 HomeMessage::Snake => Some(Message::Snake(

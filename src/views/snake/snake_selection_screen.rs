@@ -150,6 +150,9 @@ impl SnakeSelectionScreen {
         info!("Selected number of bots: {}", number_of_bots);
         self.number_of_bots = Some(number_of_bots);
         self.check_and_reset_grid_size();
+        if number_of_bots == 0 {
+            self.handle_bot_option(BotOption::None);
+        }
     }
 
     fn handle_number_of_real_players(&mut self, number_of_real_players: usize) {
@@ -233,7 +236,6 @@ impl SnakeSelectionScreen {
 
 impl View for SnakeSelectionScreen {
     fn update(&mut self, message: Message) -> Option<Message> {
-        debug!("Received message at SnakeSelectionScreen. Evaulating here.");
         let Message::Snake(snake_message) = message else {
             debug!(
                 "Received non snake message in snake selection screen: {:#?}",
