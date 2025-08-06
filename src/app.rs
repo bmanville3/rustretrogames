@@ -1,7 +1,6 @@
 //! Module to store state information.
 
 use iced::{Element, Subscription};
-use log::debug;
 
 use crate::{
     view::View,
@@ -66,7 +65,6 @@ impl State {
     /// Updates the state's [Screen].
     /// Switches screens if state.screen.update returns a [Message].
     pub fn update(&mut self, message: Message) {
-        debug!("New message at App level. Sending down...");
         if let Some(next) = self.screen.update(message) {
             match next {
                 Message::Home(_) => {

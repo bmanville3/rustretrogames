@@ -18,7 +18,7 @@ use crate::{
     app::Message,
     models::snake::{
         snake_bot::{SnakeBot, SnakeBotType},
-        snake_game::{self, SnakeAction, SnakeError, SnakeGame},
+        snake_game::{self, PartialSnakeGame, SnakeAction, SnakeError, SnakeGame},
         snake_player::SnakePlayer,
     },
     view_model::ViewModel,
@@ -36,7 +36,7 @@ pub struct SnakeParams {
 #[derive(Clone, Debug)]
 pub enum ChannelMessage {
     BotReady((usize, mpsc::Sender<ChannelMessage>)),
-    Input(SnakeGame),
+    Input(PartialSnakeGame),
     Idle(u64),
     BotMove((usize, SnakeAction, mpsc::Sender<ChannelMessage>)),
     Kill,
@@ -84,12 +84,6 @@ impl SnakeViewModel {
         })
     }
 
-    // not the most scalable but number of types will remain small
-    #[must_use]
-    pub fn get_all_bot_types() -> [SnakeBotType; 1] {
-        SnakeBotType::VALUES
-    }
-
     /// Makes a new bot thread responsbile for controlling the bot at `player_indx`.
     pub fn make_bot_thread(&self, player_indx: usize) -> impl Stream<Item = Message> {
         let bot = if let Some(bt) = &self.params.bot_type {
@@ -102,22 +96,22 @@ impl SnakeViewModel {
         };
         stream::channel(100, |mut output| async move {
             let (sender, mut receiver) = mpsc::channel::<ChannelMessage>(100);
-            match output
-                .send(Message::Snake(SnakeMessage::SnakeGameMessage(
-                    SnakeGameMessage::ChannelMessage(ChannelMessage::BotReady((
-                        bot.get_player_index(),
-                        sender.clone(),
-                    ))),
-                )))
-                .await
-            {
-                Ok(()) => (),
-                Err(e) => {
-                    error!("Problem sending BotReady message: {}", e);
-                    return;
-                }
-            }
             loop {
+                match output
+                    .send(Message::Snake(SnakeMessage::SnakeGameMessage(
+                        SnakeGameMessage::ChannelMessage(ChannelMessage::BotReady((
+                            bot.get_player_index(),
+                            sender.clone(),
+                        ))),
+                    )))
+                    .await
+                {
+                    Ok(()) => (),
+                    Err(e) => {
+                        error!("Problem sending BotReady message: {}", e);
+                        return;
+                    }
+                }
                 let input = receiver.next().await;
                 if let Some(message) = input {
                     match message {
@@ -143,20 +137,6 @@ impl SnakeViewModel {
                         }
                         ChannelMessage::Kill => break,
                         _ => (),
-                    }
-                    match output
-                        .send(Message::Snake(SnakeMessage::SnakeGameMessage(
-                            SnakeGameMessage::ChannelMessage(ChannelMessage::BotReady((
-                                bot.get_player_index(),
-                                sender.clone(),
-                            ))),
-                        )))
-                        .await
-                    {
-                        Ok(()) => (),
-                        Err(e) => {
-                            debug!("Problem sending BotReady message: {}", e);
-                        }
                     }
                 } else {
                     debug!("Got None in receiver. Breaking...");
@@ -184,16 +164,6 @@ impl SnakeViewModel {
             error!("Player at index {} not found", pindx);
             return false;
         };
-        if self.game_over() || player.is_dead() {
-            Self::kill_bot(pindx, sender.clone());
-            return false;
-        }
-
-        let time_between_moves = u128::from(max(
-            snake_game::PLAYER_MOVEMENT_CAP,
-            self.params.bot_type.as_ref().unwrap().get_move_time(),
-        ));
-
         if !player.is_bot {
             error!(
                 "Player at index {} was expected to be a bot. Player name: {}",
@@ -202,6 +172,15 @@ impl SnakeViewModel {
             );
             return false;
         }
+        if self.game_over() || player.is_dead() {
+            Self::kill_bot(pindx, sender);
+            return false;
+        }
+
+        let time_between_moves = u128::from(max(
+            snake_game::PLAYER_MOVEMENT_CAP,
+            self.params.bot_type.as_ref().unwrap().get_move_time(),
+        ));
 
         let millis_diff = Instant::now()
             .duration_since(player.time_of_last_action)
@@ -244,20 +223,20 @@ impl SnakeViewModel {
                     let mut csend = sender;
                     let model = self.model.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = csend.send(ChannelMessage::Input(model)).await {
+                        if let Err(e) = csend
+                            .send(ChannelMessage::Input(PartialSnakeGame::from_full(model)))
+                            .await
+                        {
                             debug!("Problem sending input message: {e}");
                         }
                     });
                 }
             }
             ChannelMessage::BotMove((pindx, action, sender)) => {
-                if self.check_bot_ready(pindx, sender.clone())
-                    && !self
-                        .model
-                        .move_character(pindx, action, Some(Instant::now()), false)
-                {
-                    Self::kill_bot(pindx, sender);
+                if !self.check_bot_ready(pindx, sender.clone()) {
+                    return;
                 }
+                self.model.add_move_to_snake(pindx, action);
             }
             cm => {
                 debug!("Ignoring unexpected channel message: {:#?}", cm);
@@ -327,12 +306,12 @@ impl SnakeViewModel {
                 error!("Tried to get the second real player index but wasn't present");
                 return sp1.is_dead();
             };
-            if let Some(sp2) = sp2_opt {
+            return if let Some(sp2) = sp2_opt {
                 sp1.is_dead() && sp2.is_dead()
             } else {
                 error!("Second real player was None");
                 sp1.is_dead()
-            }
+            };
         } else {
             error!("First real player was None");
             true
@@ -372,7 +351,6 @@ impl ViewModel for SnakeViewModel {
                         } else {
                             rp1i
                         };
-                        // TODO: Check the time of both players
                         let movement = match key {
                             Key::Named(code) => match code {
                                 Named::ArrowUp => Some((rp1i, SnakeAction::Up)),
@@ -392,25 +370,16 @@ impl ViewModel for SnakeViewModel {
                         };
 
                         if let Some((pindx, action)) = movement {
-                            self.model
-                                .move_character(pindx, action, Some(Instant::now()), false);
+                            self.model.add_move_to_snake(pindx, action);
                         }
                         None
                     }
                     SnakeGameMessage::Timer(_) => {
+                        debug!("Timer");
                         if self.game_over() {
                             return None;
                         }
-                        let pids_and_last_actions: Vec<(usize, SnakeAction)> = self
-                            .model
-                            .get_all_players()
-                            .iter()
-                            .filter(|p| p.is_alive())
-                            .map(|p| (p.player_id, p.last_action.clone()))
-                            .collect();
-                        for (pid, last_action) in pids_and_last_actions {
-                            self.model.move_character(pid, last_action, None, true);
-                        }
+                        self.model.move_all_characters();
                         None
                     }
                     SnakeGameMessage::Reset(reset) => {

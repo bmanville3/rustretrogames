@@ -60,7 +60,6 @@ impl SnakeGameScreen {
 
 impl View for SnakeGameScreen {
     fn update(&mut self, message: Message) -> Option<Message> {
-        debug!("Received message at SnakeGameScreen. Evaluating here.");
         if let Message::Snake(SnakeMessage::SnakeGameMessage(SnakeGameMessage::Reset(r))) = message
         {
             debug!("Turning need reset to {r}");

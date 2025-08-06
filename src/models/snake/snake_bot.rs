@@ -1,6 +1,6 @@
 use super::{
     bots::random_snake_bot::RandomBot,
-    snake_game::{SnakeAction, SnakeGame},
+    snake_game::{PartialSnakeGame, SnakeAction},
 };
 
 pub trait SnakeBot {
@@ -8,7 +8,7 @@ pub trait SnakeBot {
 
     fn get_move_time() -> u64;
 
-    fn make_move(&self, game_state: SnakeGame) -> SnakeAction;
+    fn make_move(&self, game_state: PartialSnakeGame) -> SnakeAction;
 
     fn get_player_index(&self) -> usize;
 }
