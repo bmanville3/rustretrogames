@@ -11,7 +11,7 @@ use tokio::{runtime::Handle, task::JoinHandle};
 use crate::{
     app::Message,
     models::snake::{
-        snake_bot::{SnakeBot, SnakeBotType},
+        snake_bot::SnakeBotType,
         snake_game::{PartialSnakeGame, SnakeAction, SnakeError, SnakeGame, MILLIS_BETWEEN_FRAMES},
     },
     view_model::ViewModel,
@@ -136,12 +136,12 @@ impl SnakeViewModel {
                             {
                                 if let Some((handle, sender)) = bot_threads.remove(&pindx) {
                                     Self::kill_in_time(150, handle, &sender);
-                                } else {
-                                    debug!("Could not get threads for bot {} to kill", pindx);
                                     debug!(
                                         "Number of remaining bot threads: {}",
                                         bot_threads.len()
                                     );
+                                } else {
+                                    debug!("Could not get threads for bot {} to kill", pindx);
                                 }
                                 continue;
                             }
@@ -219,6 +219,32 @@ impl SnakeViewModel {
         })
     }
 
+    fn kill_main_if_alive(&mut self) {
+        if self.main_handle.is_finished() {
+            return
+        }
+        if let Err(e) = self.sender_to_main_loop.send(ChannelMessage::Kill) {
+            error!("Error sending kill message to main: {:#?}", e);
+        }
+        tokio::task::block_in_place(|| {
+            let rt_handle = Handle::current();
+            rt_handle.block_on(async {
+                if let Err(e) = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    &mut self.main_handle,
+                )
+                .await
+                {
+                    error!(
+                        "Error closing main loop in time. Forcing abort: {:#?}",
+                        e
+                    );
+                    self.main_handle.abort();
+                }
+            });
+        });
+    }
+
     fn kill_in_time(millis: u64, mut handle: JoinHandle<()>, sender: &Sender<ChannelMessage>) {
         debug!("Killing a thread in {millis} millisonds or aborting");
         if let Err(e) = sender.send(ChannelMessage::Kill) {
@@ -285,7 +311,10 @@ impl SnakeViewModel {
                                 error!("Problem sending BotMove message: {}", e);
                             }
                         }
-                        ChannelMessage::Kill => break,
+                        ChannelMessage::Kill => {
+                            debug!("Bot thread {player_indx} received kill");
+                            break
+                        },
                         other => {
                             error!("Received unkown message in bot thread: {:#?}", other);
                         }
@@ -490,26 +519,8 @@ impl ViewModel for SnakeViewModel {
                         None
                     }
                     SnakeGameMessage::Reset => {
-                        if let Err(e) = self.sender_to_main_loop.send(ChannelMessage::Kill) {
-                            error!("Error sending kill message to main: {:#?}", e);
-                        }
-                        tokio::task::block_in_place(|| {
-                            let rt_handle = Handle::current();
-                            rt_handle.block_on(async {
-                                if let Err(e) = tokio::time::timeout(
-                                    Duration::from_secs(2),
-                                    &mut self.main_handle,
-                                )
-                                .await
-                                {
-                                    error!(
-                                        "Error closing main loop in time. Forcing abort: {:#?}",
-                                        e
-                                    );
-                                    self.main_handle.abort();
-                                }
-                            });
-                        });
+                        debug!("Reset requested. Cleaning up board...");
+                        self.kill_main_if_alive();
                         Some(Message::Snake(SnakeMessage::SnakeGameScreenTransition(
                             self.params.clone(),
                         )))
@@ -526,5 +537,11 @@ impl ViewModel for SnakeViewModel {
             warn!("Non-snake message sent to SnakeViewModel: {:#?}", message);
             None
         }
+    }
+}
+
+impl Drop for SnakeViewModel {
+    fn drop(&mut self) {
+        self.kill_main_if_alive();
     }
 }

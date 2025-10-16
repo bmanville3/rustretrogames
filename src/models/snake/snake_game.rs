@@ -34,6 +34,7 @@ pub enum SnakeError {
     InvalidBoardPlayerRatio,
     NotEnoughStarts,
     TooManyReals,
+    UnknownEnumVariant((i8, i8)),
 }
 
 /// Type of block that can be found on the board.
@@ -80,6 +81,22 @@ impl SnakeAction {
     #[must_use]
     pub fn get_random_action() -> SnakeAction {
         SnakeAction::VARIANTS[rand::thread_rng().gen_range(0..SnakeAction::VARIANTS.len())].clone()
+    }
+
+    pub fn get_enum_variant_from_values(row_delta: i8, col_delta: i8) -> Result<SnakeAction> {
+        let row_delta = row_delta.signum();
+        let col_delta = col_delta.signum();
+        match (row_delta, col_delta) {
+            (-1, 0) => Ok(SnakeAction::Up),
+            (1, 0) => Ok(SnakeAction::Down),
+            (0, -1) => Ok(SnakeAction::Left),
+            (0, 1) => Ok(SnakeAction::Right),
+            unknown => Err(SnakeError::UnknownEnumVariant(unknown)),
+        }
+    }
+
+    pub fn get_enum_variant_from_tuple(delta: (i8, i8)) -> Result<SnakeAction> {
+        Self::get_enum_variant_from_values(delta.0, delta.1)
     }
 }
 
