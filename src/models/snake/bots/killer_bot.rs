@@ -1,7 +1,10 @@
 use log::error;
 use rand::Rng;
 
-use crate::models::snake::{snake_bot::SnakeBot, snake_game::{PartialSnakeGame, SnakeAction}};
+use crate::models::snake::{
+    snake_bot::SnakeBot,
+    snake_game::{PartialSnakeGame, SnakeAction},
+};
 
 #[derive(Debug)]
 pub struct KillerBot {
@@ -25,7 +28,10 @@ impl KillerBot {
             Some(pos) => pos,
             None => return None,
         };
-        let other_last_move = *game_state.last_movements.get(other_index).unwrap_or(&(0, 0));
+        let other_last_move = *game_state
+            .last_movements
+            .get(other_index)
+            .unwrap_or(&(0, 0));
         let nx_is = other_head.0 as isize + other_last_move.0 as isize;
         let ny_is = other_head.1 as isize + other_last_move.1 as isize;
         if nx_is < 0 || ny_is < 0 {
@@ -79,7 +85,12 @@ impl KillerBot {
         self.bfs_towards_goal(
             game_state,
             head,
-            &|x, y| matches!(game_state.grid[x][y], crate::models::snake::snake_game::SnakeBlock::Apple),
+            &|x, y| {
+                matches!(
+                    game_state.grid[x][y],
+                    crate::models::snake::snake_game::SnakeBlock::Apple
+                )
+            },
             Some(max_dist),
         )
     }
@@ -95,21 +106,30 @@ impl SnakeBot for KillerBot {
             }
         };
 
-        let last_move = *game_state.last_movements.get(self.player_indx).unwrap_or(&(0, 0));
+        let last_move = *game_state
+            .last_movements
+            .get(self.player_indx)
+            .unwrap_or(&(0, 0));
 
         // prefer eating an apple if its within 3 steps
         if let Some(step_to_apple) = self.find_nearby_apple_step(&game_state, our_head, 3) {
-            let action = SnakeAction::get_enum_variant_from_values(step_to_apple.0, step_to_apple.1);
+            let action =
+                SnakeAction::get_enum_variant_from_values(step_to_apple.0, step_to_apple.1);
             if let Ok(a) = action {
                 return a;
             } else {
-                error!("Apple BFS returned invalid move: {:#?}. Trying to find head instead", action.err());
+                error!(
+                    "Apple BFS returned invalid move: {:#?}. Trying to find head instead",
+                    action.err()
+                );
             }
         }
 
         // add a tiny bit of randomness so bots dont just go side-by-side up and down the board
         if rand::thread_rng().gen::<f32>() < 0.95 {
-            if let Some((target_cell, _opponent_idx)) = self.find_nearest_opponent_front(&game_state, our_head) {
+            if let Some((target_cell, _opponent_idx)) =
+                self.find_nearest_opponent_front(&game_state, our_head)
+            {
                 let maybe_step = self.bfs_towards_goal(
                     &game_state,
                     our_head,

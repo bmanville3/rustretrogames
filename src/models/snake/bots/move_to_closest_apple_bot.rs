@@ -39,7 +39,10 @@ impl SnakeBot for MoveToClosestAppleBot {
             }
         };
 
-        let last_move = *game_state.last_movements.get(self.player_indx).unwrap_or(&(0,0));
+        let last_move = *game_state
+            .last_movements
+            .get(self.player_indx)
+            .unwrap_or(&(0, 0));
 
         // Compute the preferred direction toward the closest apple
         let target_move_opt = self.find_closest_reachable_apple(&game_state, our_head);
@@ -51,7 +54,7 @@ impl SnakeBot for MoveToClosestAppleBot {
                 Err(e) => {
                     error!("BFS returned a bad move: {:#?}", e);
                     SnakeAction::get_random_action()
-                },
+                }
             };
         }
 
@@ -62,10 +65,8 @@ impl SnakeBot for MoveToClosestAppleBot {
         }
 
         // no where to go
-        return SnakeAction::get_random_action()
+        return SnakeAction::get_random_action();
     }
-
-
 
     fn get_player_index(&self) -> usize {
         self.player_indx

@@ -1,4 +1,5 @@
-pub trait Environment where
+pub trait Environment
+where
     Self::State: Clone,
     Self::Action: Clone,
 {

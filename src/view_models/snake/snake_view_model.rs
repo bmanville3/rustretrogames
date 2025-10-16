@@ -32,7 +32,6 @@ pub enum ChannelMessage {
     Game(SnakeGame),
     MoveRealPlayer((usize, SnakeAction)),
     TickBoard,
-    BotReady(usize),
     Input(PartialSnakeGame),
     BotMove((usize, SnakeAction)),
     Kill,
@@ -114,105 +113,105 @@ impl SnakeViewModel {
         tokio::spawn(async move {
             let mut errors_in_a_row = 0;
             loop {
-                let input = receiver_for_main_loop.recv();
-                if input.is_ok() {
-                    errors_in_a_row = 0;
-                    let message = input.unwrap();
-                    match message {
-                        ChannelMessage::BotReady(pindx) => {
-                            let bot = if let Some(b) = model.get_all_players().get(pindx) {
-                                b
-                            } else {
-                                error!("Got pindx {pindx} but no bot found there");
-                                continue;
-                            };
-                            if bot.is_dead()
-                                || Self::game_over_inner(
-                                    &model,
-                                    real_player_1_index,
-                                    real_player_2_index,
-                                    number_of_real_players,
-                                )
-                            {
-                                if let Some((handle, sender)) = bot_threads.remove(&pindx) {
-                                    Self::kill_in_time(150, handle, &sender);
-                                    debug!(
-                                        "Number of remaining bot threads: {}",
-                                        bot_threads.len()
-                                    );
-                                } else {
-                                    debug!("Could not get threads for bot {} to kill", pindx);
-                                }
-                                continue;
-                            }
-                            let (_, sender) = bot_threads.get(&pindx).unwrap();
-                            let partial = PartialSnakeGame::from_full(model.clone());
-                            if let Err(e) = sender.send(ChannelMessage::Input(partial)) {
-                                debug!("Problem sending input message: {e}");
-                            }
-                        }
-                        ChannelMessage::BotMove((pindx, action)) => {
-                            let bot = if let Some(b) = model.get_all_players().get(pindx) {
-                                b
-                            } else {
-                                error!("Got pindx {pindx} but no bot found there");
-                                continue;
-                            };
-                            if bot.is_dead()
-                                || Self::game_over_inner(
-                                    &model,
-                                    real_player_1_index,
-                                    real_player_2_index,
-                                    number_of_real_players,
-                                )
-                            {
-                                if let Some((handle, sender)) = bot_threads.remove(&pindx) {
-                                    Self::kill_in_time(150, handle, &sender);
-                                    debug!(
-                                        "Number of remaining bot threads: {}",
-                                        bot_threads.len()
-                                    );
-                                } else {
-                                    debug!("Could not get threads for bot {} to kill", pindx);
-                                }
-                                continue;
-                            }
-                            model.add_move_to_snake(pindx, action);
-                        }
-                        ChannelMessage::Kill => {
-                            debug!("Killing main loop");
-                            for (handle, sender) in bot_threads.into_values() {
-                                Self::kill_in_time(150, handle, &sender);
-                            }
+                let message = match receiver_for_main_loop.recv() {
+                    Ok(m) => {
+                        errors_in_a_row = 0;
+                        m
+                    }
+                    Err(e) => {
+                        errors_in_a_row += 1;
+                        error!("Error receiving message in main loop.: {:#?}", e);
+                        if errors_in_a_row > 10 {
+                            error!("Received {errors_in_a_row} errors in a row. Quitting");
                             break;
                         }
-                        ChannelMessage::MoveRealPlayer((pindx, action)) => {
-                            model.add_move_to_snake(pindx, action);
+                        continue;
+                    }
+                };
+                match message {
+                    ChannelMessage::BotMove((pindx, action)) => {
+                        let Some(bot) = model.get_all_players().get(pindx) else {
+                            error!("Got pindx {pindx} but no bot found there");
+                            continue;
+                        };
+                        if bot.is_dead()
+                            || Self::game_over_inner(
+                                &model,
+                                real_player_1_index,
+                                real_player_2_index,
+                                number_of_real_players,
+                            )
+                        {
+                            if let Some((handle, sender)) = bot_threads.remove(&pindx) {
+                                Self::kill_in_time(150, handle, &sender);
+                                debug!("Number of remaining bot threads: {}", bot_threads.len());
+                            } else {
+                                debug!("Could not get threads for bot {} to kill", pindx);
+                            }
+                            continue;
                         }
-                        ChannelMessage::TickBoard => {
-                            model.move_all_characters();
+                        model.add_move_to_snake(pindx, action);
+                    }
+                    ChannelMessage::Kill => {
+                        debug!("Killing main loop");
+                        for (handle, sender) in bot_threads.into_values() {
+                            Self::kill_in_time(150, handle, &sender);
                         }
-                        ChannelMessage::GetGame(sender) => {
-                            if let Err(e) = sender.send(ChannelMessage::Game(model.clone())) {
-                                error!("Problem sending model back: {:#?}", e);
+                        break;
+                    }
+                    ChannelMessage::MoveRealPlayer((pindx, action)) => {
+                        model.add_move_to_snake(pindx, action);
+                    }
+                    ChannelMessage::TickBoard => {
+                        model.move_all_characters();
+                        let mut bots_to_remove = Vec::new();
+                        {
+                            for (bot_id, (_hanlde, sender)) in &bot_threads {
+                                let Some(bot) = model.get_all_players().get(*bot_id) else {
+                                    error!("Got pindx {bot_id} but no bot found there");
+                                    continue;
+                                };
+                                if bot.is_dead()
+                                    || Self::game_over_inner(
+                                        &model,
+                                        real_player_1_index,
+                                        real_player_2_index,
+                                        number_of_real_players,
+                                    )
+                                {
+                                    bots_to_remove.push(*bot_id);
+                                } else {
+                                    let partial = PartialSnakeGame::from_full(model.clone());
+                                    match sender.send(ChannelMessage::Input(partial)) {
+                                        Ok(()) => (),
+                                        Err(e) => error!(
+                                            "Error sending message to bot thread {bot_id}: {e}"
+                                        ),
+                                    }
+                                }
                             }
                         }
-                        unknown => {
-                            error!(
-                                "Unexpected channel message received in main loop: {:#?}",
-                                unknown
-                            );
+
+                        for bot_id in bots_to_remove {
+                            if let Some((handle, sender)) = bot_threads.remove(&bot_id) {
+                                Self::kill_in_time(150, handle, &sender);
+                                debug!("Number of remaining bot threads: {}", bot_threads.len());
+                            } else {
+                                debug!("Could not get threads for bot {} to kill", bot_id);
+                            }
+                            continue;
                         }
                     }
-                } else {
-                    errors_in_a_row += 1;
-                    error!(
-                        "Error receiving message in main loop.: {:#?}",
-                        input.unwrap_err()
-                    );
-                    if errors_in_a_row > 3 {
-                        error!("Received {errors_in_a_row} errors in a row. Quitting");
-                        break;
+                    ChannelMessage::GetGame(sender) => {
+                        if let Err(e) = sender.send(ChannelMessage::Game(model.clone())) {
+                            error!("Problem sending model back: {:#?}", e);
+                        }
+                    }
+                    unknown => {
+                        error!(
+                            "Unexpected channel message received in main loop: {:#?}",
+                            unknown
+                        );
                     }
                 }
             }
@@ -221,7 +220,7 @@ impl SnakeViewModel {
 
     fn kill_main_if_alive(&mut self) {
         if self.main_handle.is_finished() {
-            return
+            return;
         }
         if let Err(e) = self.sender_to_main_loop.send(ChannelMessage::Kill) {
             error!("Error sending kill message to main: {:#?}", e);
@@ -229,16 +228,10 @@ impl SnakeViewModel {
         tokio::task::block_in_place(|| {
             let rt_handle = Handle::current();
             rt_handle.block_on(async {
-                if let Err(e) = tokio::time::timeout(
-                    Duration::from_secs(2),
-                    &mut self.main_handle,
-                )
-                .await
+                if let Err(e) =
+                    tokio::time::timeout(Duration::from_secs(2), &mut self.main_handle).await
                 {
-                    error!(
-                        "Error closing main loop in time. Forcing abort: {:#?}",
-                        e
-                    );
+                    error!("Error closing main loop in time. Forcing abort: {:#?}", e);
                     self.main_handle.abort();
                 }
             });
@@ -281,53 +274,39 @@ impl SnakeViewModel {
         };
         let (sender_to_bot, receiver_for_bot) = mpsc::channel::<ChannelMessage>();
         let bot_handle = tokio::spawn(async move {
-            let mut send_errors_in_a_row = 0;
             let mut recv_errors_in_a_row = 0;
             loop {
-                while let Err(e) =
-                    sender_to_view_model.send(ChannelMessage::BotReady(bot.get_player_index()))
-                {
-                    send_errors_in_a_row += 1;
-                    error!("Problem sending BotReady message: {}", e);
-                    if send_errors_in_a_row > 3 {
-                        break;
-                    }
-                }
-                if send_errors_in_a_row > 3 {
-                    error!("Could not send bot read message. Quitting bot thread {player_indx}");
-                    break;
-                } else {
-                    send_errors_in_a_row = 0;
-                }
-                let input = receiver_for_bot.recv();
-                if input.is_ok() {
-                    let message = input.unwrap();
-                    match message {
-                        ChannelMessage::Input(snake_game) => {
-                            if let Err(e) = sender_to_view_model.send(ChannelMessage::BotMove((
-                                bot.get_player_index(),
-                                bot.make_move(snake_game),
-                            ))) {
-                                error!("Problem sending BotMove message: {}", e);
-                            }
-                        }
-                        ChannelMessage::Kill => {
-                            debug!("Bot thread {player_indx} received kill");
-                            break
-                        },
-                        other => {
-                            error!("Received unkown message in bot thread: {:#?}", other);
-                        }
-                    }
-                } else {
-                    recv_errors_in_a_row += 1;
-                    error!("Error getting message: {:#?}", input.unwrap_err());
-                    if recv_errors_in_a_row > 3 {
-                        error!("Bot {player_indx} could not receive 3 times in a row. Quitting");
-                        break;
-                    } else {
+                let message = match receiver_for_bot.recv() {
+                    Ok(m) => {
                         recv_errors_in_a_row = 0;
+                        m
                     }
+                    Err(e) => {
+                        recv_errors_in_a_row += 1;
+                        error!("Error getting message: {:#?}", e);
+                        continue;
+                    }
+                };
+                match message {
+                    ChannelMessage::Input(snake_game) => {
+                        if let Err(e) = sender_to_view_model.send(ChannelMessage::BotMove((
+                            bot.get_player_index(),
+                            bot.make_move(snake_game),
+                        ))) {
+                            error!("Problem sending BotMove message: {}", e);
+                        }
+                    }
+                    ChannelMessage::Kill => {
+                        debug!("Bot thread {player_indx} received kill");
+                        break;
+                    }
+                    other => {
+                        error!("Received unkown message in bot thread: {:#?}", other);
+                    }
+                }
+                if recv_errors_in_a_row > 10 {
+                    error!("Bot {player_indx} could not receive 10 times in a row. Quitting");
+                    return;
                 }
             }
         });
@@ -342,18 +321,18 @@ impl SnakeViewModel {
         {
             error!("Problem sending to main loop: {:#?}", e);
         }
-        let input = receiver.recv();
-        if input.is_ok() {
-            match input.unwrap() {
+        match receiver.recv() {
+            Ok(input) => match input {
                 ChannelMessage::Game(snake_game) => Some(snake_game),
                 unknown => {
                     error!("Got unexpected message from get_game_copy: {:#?}", unknown);
                     None
                 }
+            },
+            Err(e) => {
+                error!("Problem getting game board: {:#?}", e);
+                None
             }
-        } else {
-            error!("Problem getting game board: {:#?}", input.unwrap_err());
-            None
         }
     }
 
@@ -469,11 +448,13 @@ impl ViewModel for SnakeViewModel {
                         if self.params.number_of_real_players == 0 {
                             return None;
                         }
-                        let rp1i = self.real_player_1_index.unwrap();
-                        let orpi = if self.real_player_2_index.is_some() {
-                            self.real_player_2_index.unwrap()
-                        } else {
-                            rp1i
+                        let Some(rp1i) = self.real_player_1_index else {
+                            error!("Checked and there were no real players but real player 1 index was empty");
+                            return None;
+                        };
+                        let orpi = match self.real_player_2_index {
+                            Some(i) => i,
+                            None => rp1i,
                         };
                         let movement = match key {
                             Key::Named(code) => match code {

@@ -13,7 +13,10 @@ impl ReLU {
 impl Layer for ReLU {
     fn forward(&mut self, input: &[f32]) -> Vec<f32> {
         self.mask = input.iter().map(|&x| x > 0.0).collect();
-        input.iter().map(|&x| if x > 0.0 { x } else { 0.0 }).collect()
+        input
+            .iter()
+            .map(|&x| if x > 0.0 { x } else { 0.0 })
+            .collect()
     }
 
     fn backward(&mut self, grad_output: &[f32], _lr: f32) -> Vec<f32> {

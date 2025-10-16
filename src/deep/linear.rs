@@ -15,7 +15,11 @@ impl Linear {
             .map(|_| (0..input_size).map(|_| rng.gen_range(-0.1..0.1)).collect())
             .collect();
         let biases = vec![0.0; output_size];
-        Self { weights, biases, input_cache: vec![] }
+        Self {
+            weights,
+            biases,
+            input_cache: vec![],
+        }
     }
 }
 
@@ -25,9 +29,7 @@ impl Layer for Linear {
         self.weights
             .iter()
             .zip(self.biases.iter())
-            .map(|(w_row, b)| {
-                w_row.iter().zip(input).map(|(w, x)| w * x).sum::<f32>() + b
-            })
+            .map(|(w_row, b)| w_row.iter().zip(input).map(|(w, x)| w * x).sum::<f32>() + b)
             .collect()
     }
 

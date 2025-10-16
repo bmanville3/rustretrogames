@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use crate::models::snake::{bots::killer_bot::KillerBot, snake_game::SnakeBlock};
 
 use super::{
-    bots::random_snake_bot::RandomBot,
     bots::move_to_closest_apple_bot::MoveToClosestAppleBot,
+    bots::random_snake_bot::RandomBot,
     snake_game::{PartialSnakeGame, SnakeAction},
 };
 
@@ -123,7 +123,7 @@ impl SnakeBotType {
     pub const VALUES: [Self; 3] = [Self::RandomMoveBot, Self::ClosestAppleBot, Self::KillerBot];
 
     #[must_use]
-    pub fn make_new_bot(&self, player_indx: usize) ->  Box<dyn SnakeBot> {
+    pub fn make_new_bot(&self, player_indx: usize) -> Box<dyn SnakeBot> {
         match self {
             SnakeBotType::ClosestAppleBot => Box::new(MoveToClosestAppleBot::new(player_indx)),
             SnakeBotType::KillerBot => Box::new(KillerBot::new(player_indx)),
