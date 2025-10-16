@@ -1,152 +1,176 @@
-// use std::collections::HashMap;
+// use rand::seq::SliceRandom;
+// use rand::Rng;
 
-// use crate::models::snake::snake_model::{Snake, SnakeBlock};
+// use crate::rl::dqn_model::DQN;
+// use crate::rl::environment::Environment;
 
-// pub struct State {
-//     board: Vec<Vec<SnakeBlock>>,
+// #[derive(Clone)]
+// struct Transition<A> {
+//     state: Vec<f32>,
+//     action: A,
+//     reward: f32,
+//     next_state: Vec<f32>,
+//     done: bool,
 // }
 
-// pub struct Action {
-//     action: (i8, i8),
+// struct ReplayBuffer<A> {
+//     capacity: usize,
+//     buffer: Vec<Transition<A>>,
 // }
 
-// pub struct QTable {
-//     table: HashMap<State, HashMap<Action, f32>>,
-// }
+// impl<A: Clone> ReplayBuffer<A> {
+//     fn new(capacity: usize) -> Self {
+//         Self {
+//             capacity,
+//             buffer: Vec::with_capacity(capacity),
+//         }
+//     }
 
-// impl QTable {
-//     pub fn new() -> Self {
-//         Self { table: HashMap::new() }
+//     fn push(&mut self, transition: Transition<A>) {
+//         if self.buffer.len() >= self.capacity {
+//             self.buffer.remove(0);
+//         }
+//         self.buffer.push(transition);
+//     }
+
+//     fn sample(&self, batch_size: usize) -> Vec<Transition<A>> {
+//         let mut rng = rand::thread_rng();
+//         self.buffer
+//             .choose_multiple(&mut rng, batch_size)
+//             .cloned()
+//             .collect()
+//     }
+
+//     fn len(&self) -> usize {
+//         self.buffer.len()
 //     }
 // }
 
-// pub fn q_learning(
-//     game_environment: Snake,
-//     num_episodes: u64,
-//     max_episode_length: u64,
-//     learning_rate: fn(u64) -> f32,
+// /// Trainer for a DQN model
+// pub struct DQNTrainer<E: Environment> {
+//     dqn: DQN,
+//     target_dqn: DQN,
+//     buffer: ReplayBuffer<E::Action>,
 //     gamma: f32,
-//     epsilon: fn(u64) -> f32,
-//     q_table: Option<QTable>,
-// ) -> QTable {
-//     let q_table = q_table.unwrap_or_else(|| QTable::new());
-
-//     q_table
+//     epsilon: f32,
+//     epsilon_decay: f32,
+//     epsilon_min: f32,
+//     learning_rate: f32,
 // }
 
-// // def q_learning(
-// //     env: gymnasium.Env,
-// //     num_episodes: int,
-// //     max_episode_length: int,
-// //     learning_rate: float,
-// //     gamma: float,
-// //     seed: int,
-// //     epsilon: float = 1.0,
-// // ) -> dict[str, dict[str, float]]:
-// //     """
-// //     Build a Q-Learning policy
+// impl<E: Environment> DQNTrainer<E> {
+//     pub fn new(input_dim: usize, output_dim: usize) -> Self {
+//         let dqn = DQN::new(input_dim, output_dim);
+//         let target_dqn = DQN::new(input_dim, output_dim);
+//         let buffer = ReplayBuffer::new(10_000);
 
-// //     Args:
-// //         env (Env): The Environment instance
-// //         num_episodes (int): The number of episodes to build the table from
-// //         max_episode_length (int): The maximum length of an episode to prevent infinite loops
-// //         learning_rate (float): A hyperparameter denoting how quickly the agent "learns" reward values
-// //         gamma (float): The discount rate
-// //         epsilon (float): The probability with which you should select a random
-// //         action instead of following a greedy policy
+//         Self {
+//             dqn,
+//             target_dqn,
+//             buffer,
+//             gamma: 0.99,
+//             epsilon: 1.0,
+//             epsilon_decay: 0.995,
+//             epsilon_min: 0.05,
+//             learning_rate: 0.001,
+//         }
+//     }
 
-// //     Returns:
-// //         dict[str, dict[str, float]]: A dictionary of dictionaries mapping a state and action
-// //         to a specific reward value. This is what you will build in this algorithm
-// //     """
+//     /// Select action via eps-greedy policy
+//     fn select_action(&mut self, state: &Vec<f32>, actions: &[E::Action]) -> E::Action {
+//         let mut rng = rand::thread_rng();
+//         if rng.gen::<f32>() < self.epsilon {
+//             actions.choose(&mut rng).unwrap().clone()
+//         } else {
+//             let q_values = self.dqn.forward(state.clone());
+//             let max_idx = q_values
+//                 .iter()
+//                 .enumerate()
+//                 .max_by(|a, b| a.1.total_cmp(b.1))
+//                 .map(|(i, _)| i)
+//                 .unwrap_or(0);
+//             actions[max_idx % actions.len()].clone()
+//         }
+//     }
 
-// //     # Set up q-table
-// //     q_table: dict[str, dict[str, float]] = {}
-// //     random.seed(seed)
+//     /// Train the DQN on a given environment for N episodes
+//     pub fn train(&mut self, env: &mut E, num_episodes: usize, batch_size: usize, max_moves: usize) {
+//         for episode in 0..num_episodes {
+//             let mut state = env.reset();
+//             let mut total_reward = 0.0;
 
-// //     ### YOUR CODE BELOW HERE
-// //     def _init_state_actions(state_id: str, actions: list[str]):
-// //         if not state_id in q_table:
-// //             q_table[state_id] = {}
-// //         for a in actions:
-// //             if a not in q_table[state_id]:
-// //                 q_table[state_id][a] = 0.0
+//             for _t in 0..max_moves {
+//                 let actions = env.available_actions();
+//                 let action = self.select_action(&state_to_vec(&state), &actions);
+//                 let (next_state, reward, done) = env.step(&action);
+//                 total_reward += reward;
 
-// //     for episode in range(num_episodes):
-// //         epsilon = abs(math.exp(-episode / 300) * math.cos(episode / 10))
-// //         state_id, actions = reset_mdp(env, seed)
-// //         _init_state_actions(state_id, actions)
-// //         for _ in range(max_episode_length):
-// //             if random.uniform(0.0, 1.0) < epsilon:
-// //                 action = random.choice(actions)
-// //             else:
-// //                 best_action = None
-// //                 best_value = float("-inf")
-// //                 for act in actions:
-// //                     if q_table[state_id][act] > best_value:
-// //                         best_value = q_table[state_id][act]
-// //                         best_action = act
-// //                 if best_action is None:
-// //                     print("This should not happen")
-// //                     best_action = actions[0]
-// //                 action = best_action
-// //             next_state_id, reward, terminated, next_actions = do_action_mdp(action, env)
-// //             _init_state_actions(next_state_id, next_actions)
+//                 self.buffer.push(Transition {
+//                     state: state_to_vec(&state),
+//                     action: action.clone(),
+//                     reward,
+//                     next_state: state_to_vec(&next_state),
+//                     done,
+//                 });
 
-// //             max_next_q_value = 0.0 if not next_actions else max([q_table[next_state_id][act] for act in next_actions])
-// //             delta = reward + gamma * max_next_q_value - q_table[state_id][action]
-// //             q_table[state_id][action] += learning_rate * delta
+//                 state = next_state;
 
-// //             state_id = next_state_id
-// //             actions = next_actions
+//                 if self.buffer.len() >= batch_size {
+//                     self.learn(batch_size);
+//                 }
 
-// //             if terminated:
-// //                 break
+//                 if done {
+//                     break;
+//                 }
+//             }
 
-// //     ### YOUR CODE ABOVE HERE
+//             // Decay epsilon
+//             self.epsilon = (self.epsilon * self.epsilon_decay).max(self.epsilon_min);
 
-// //     return q_table
+//             println!(
+//                 "Episode {}: total reward = {:.2}, epsilon = {:.3}",
+//                 episode + 1,
+//                 total_reward,
+//                 self.epsilon
+//             );
+//         }
+//     }
 
-// // def run_policy(
-// //     q_table: dict[str, dict[str, float]],
-// //     env: gymnasium.Env,
-// //     seed: int,
-// //     max_policy_length: int = 25,
-// // ) -> tuple[list[str], float]:
-// //     """
-// //     Run a policy from a built Q-Table
+//     /// Perform one learning step (gradient descent)
+//     fn learn(&mut self, batch_size: usize)
+//     where
+//         E::Action: Clone,
+//     {
+//         let batch = self.buffer.sample(batch_size);
 
-// //     Args:
-// //         q_table (dict[str, dict[str, float]]): The built Q-Table dictionary
-// //         env (gymnasium.Env): The environment in which to run the policy
-// //         seed (int): The seed to use
-// //         max_policy_length (int): The maximum length of the policy to run
+//         for t in batch {
+//             let q_values = self.dqn.forward(t.state.clone());
+//             let next_q_values = self.target_dqn.forward(t.next_state.clone());
 
-// //     Returns:
-// //         list[str]: The sequence of actions that the policy performed
-// //         float: The sum total reward gained from the environment
-// //     """
-// //     actions = []  # Store the entire sequence of actions here
-// //     total_reward = 0.0  # Store the total sum reward of all actions executed here
+//             // assume action index corresponds to vector position
+//             let action_index = 0; // you'd map actions to indices in a real env
+//             let target = if t.done {
+//                 t.reward
+//             } else {
+//                 t.reward + self.gamma * next_q_values.iter().cloned().fold(f32::MIN, f32::max)
+//             };
 
-// //     ### YOUR CODE BELOW HERE
+//             let mut target_vec = q_values.clone();
+//             target_vec[action_index] = target;
 
-// //     state_id, actions = reset_mdp(env, seed)
+//             let loss = mse_loss(&q_values, &target_vec);
 
-// //     for _ in range(max_policy_length):
-// //         if not actions: # no where to go
-// //             break
-// //         if state_id in q_table: # been explored before
-// //             action = max(q_table[state_id].items(), key = lambda x: x[1])[0]
-// //         else:
-// //             # my q-learning apparently sucks
-// //             action = random.choice(actions)
-// //         actions.append(action)
-// //         state_id, reward, terminal, actions = do_action_mdp(action, env)
-// //         total_reward += reward
-// //         if terminal:
-// //             break
+//             // Backpropagate manually using your small NN module
+//             self.dqn.net.backward(loss);
+//             self.dqn.net.step(self.learning_rate);
+//         }
+//     }
+// }
 
-// //     ### YOUR CODE ABOVE HERE
-
-// //     return actions, total_reward
+// /// Convert state type to a flat vector
+// fn state_to_vec<S>(state: &S) -> Vec<f32>
+// where
+//     S: Clone + Into<Vec<f32>>,
+// {
+//     state.clone().into()
+// }
