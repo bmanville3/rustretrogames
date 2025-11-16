@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::deep::layer::Layer;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReLU {
     mask: Vec<bool>,
 }

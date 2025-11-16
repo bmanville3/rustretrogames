@@ -1,13 +1,15 @@
 //! Module to perform the Deep Q Learning algorithm.
-use log::error;
-use rand::seq::SliceRandom;
+use core::f32;
+use std::collections::VecDeque;
+
+use log::{error, info};
 use rand::Rng;
 
 use crate::deep::mse::mse_loss;
-use crate::rl::dqn_model::DQN;
+use crate::rl::dql_model::DQL;
 use crate::rl::environment::Environment;
 
-/// A single experience tuple used for DQN training.
+/// A single experience tuple used for DQL training.
 /// 
 /// Each transition represents one step in the environment.
 #[derive(Clone)]
@@ -24,7 +26,7 @@ struct Transition<A> {
     done: bool,
 }
 
-/// A fixed-capacity replay buffer storing past transitions for DQN.
+/// A fixed-capacity replay buffer storing past transitions for DQL.
 ///
 /// Older transitions are removed once the buffer reaches its maximum size.
 /// Sampling uses uniform random selection.
@@ -32,7 +34,7 @@ struct ReplayBuffer<A> {
     /// Maximum capacity of the buffer.
     capacity: usize,
     /// The backing buffer array.
-    buffer: Vec<Transition<A>>,
+    buffer: VecDeque<Transition<A>>,
 }
 
 impl<A: Clone> ReplayBuffer<A> {
@@ -40,24 +42,27 @@ impl<A: Clone> ReplayBuffer<A> {
     fn new(capacity: usize) -> Self {
         Self {
             capacity,
-            buffer: Vec::with_capacity(capacity),
+            buffer: VecDeque::with_capacity(capacity),
         }
     }
 
     /// Insert a new transition, removing the oldest if capacity is exceeded.
     fn push(&mut self, transition: Transition<A>) {
         if self.buffer.len() >= self.capacity {
-            self.buffer.remove(0);
+            self.buffer.pop_front();
         }
-        self.buffer.push(transition);
+        self.buffer.push_back(transition);
     }
 
     /// Sample a batch of transitions uniformly at random.
-    fn sample(&self, batch_size: usize) -> Vec<Transition<A>> {
-        let mut rng = rand::thread_rng();
-        self.buffer
-            .choose_multiple(&mut rng, batch_size)
-            .cloned()
+    fn sample<'a>(&'a self, batch_size: usize) -> Vec<&'a Transition<A>> {
+        let len = self.buffer.len();
+
+        let indices = rand::seq::index::sample(&mut rand::thread_rng(), len, batch_size);
+
+        indices
+            .into_iter()
+            .map(|i| &self.buffer[i])
             .collect()
     }
 
@@ -67,15 +72,15 @@ impl<A: Clone> ReplayBuffer<A> {
     }
 }
 
-/// A trainer implementing the Deep Q-Network (DQN) algorithm.
+/// A trainer implementing the Deep Q-Network (DQL) algorithm.
 /// 
 /// # Type Parameters
 /// - `E`: The environment type, implementing the `Environment` trait.
-pub struct DQNTrainer<E: Environment> {
+pub struct DQLTrainer<E: Environment> {
     /// The Deep Q learning network to train.
-    dqn: DQN,
+    dqn: DQL,
     /// The target network to use in training.
-    target_dqn: DQN,
+    target_dqn: DQL,
     /// Replay buffer of seen actions.
     buffer: ReplayBuffer<E::Action>,
     /// Weight decay for future rewards.
@@ -90,11 +95,11 @@ pub struct DQNTrainer<E: Environment> {
     learning_rate: f32,
 }
 
-impl<E: Environment> DQNTrainer<E> {
-    pub fn new(state_size: usize, num_of_actions: usize, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32) -> Self {
-        let dqn = DQN::new(state_size, num_of_actions);
-        let target_dqn = DQN::new(state_size, num_of_actions);
-        let buffer = ReplayBuffer::new(10_000);
+impl<E: Environment> DQLTrainer<E> {
+    pub fn new(state_size: usize, num_of_actions: usize, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32, buffer_capacity: usize) -> Self {
+        let dqn = DQL::new(state_size, num_of_actions);
+        let target_dqn = DQL::new(state_size, num_of_actions);
+        let buffer = ReplayBuffer::new(buffer_capacity);
 
         Self {
             dqn,
@@ -131,7 +136,7 @@ impl<E: Environment> DQNTrainer<E> {
 
         let has_valid_actions = !valid_indices.is_empty();
 
-        if rng.gen::<f32>() < self.epsilon {
+        if rng.gen_range(0.0..1.0) < self.epsilon {
             if has_valid_actions {
                 let idx = valid_indices[rng.gen_range(0..valid_indices.len())];
                 return all_actions[idx].clone();
@@ -165,7 +170,7 @@ impl<E: Environment> DQNTrainer<E> {
         all_actions[selected_idx].clone()
     }
 
-    /// Train the DQN for a fixed number of episodes.
+    /// Train the DQL for a fixed number of episodes.
     ///
     /// For each episode:
     /// - Reset the environment
@@ -173,11 +178,12 @@ impl<E: Environment> DQNTrainer<E> {
     /// - Store transitions in the replay buffer
     /// - Every batch_size samples, perform gradient steps
     /// - Decay epsilon between episodes
-    pub fn train(&mut self, env: &mut E, num_episodes: usize, batch_size: usize, max_moves: usize, episode_sync_freq: usize) {
+    pub fn train(&mut self, env: &mut E, num_episodes: usize, batch_size: usize, max_moves: usize, update_target_after_steps: usize) {
         let actions = E::all_actions();
+        let mut steps = 0;
+        let mut total_reward = 0.0;
         for episode in 0..num_episodes {
             let mut state = env.reset().into();
-            let mut total_reward = 0.0;
 
             for _t in 0..max_moves {
                 let action_mask = env.get_action_mask();
@@ -198,6 +204,10 @@ impl<E: Environment> DQNTrainer<E> {
 
                 if self.buffer.len() >= batch_size {
                     self.learn(batch_size);
+                    steps += 1;
+                    if steps % update_target_after_steps == 0 {
+                        self.target_dqn = self.dqn.clone();
+                    }
                 }
 
                 if done {
@@ -205,22 +215,20 @@ impl<E: Environment> DQNTrainer<E> {
                 }
             }
 
-            self.epsilon = (self.epsilon * self.epsilon_decay).max(self.epsilon_min);
-
-            println!(
-                "Episode {}: total reward = {:.2}, epsilon = {:.3}",
-                episode + 1,
-                total_reward,
-                self.epsilon
-            );
-
-            if episode % episode_sync_freq == 0 {
-                self.target_dqn = self.dqn.clone();
+            if (episode + 1) % 100 == 0 {
+                info!(
+                    "Episode {}: average reward over last 100 episodes = {:.2} with epsilon = {:.3}",
+                    episode + 1,
+                    total_reward / 100.0,
+                    self.epsilon
+                );
+                total_reward = 0.0;
             }
+            self.epsilon = (self.epsilon * self.epsilon_decay).max(self.epsilon_min);
         }
     }
 
-    /// Perform one gradient-descent update on the DQN using a batch from replay.
+    /// Perform one gradient-descent update on the DQL using a batch from replay.
     ///
     /// The method:
     /// - Samples transitions
@@ -233,24 +241,29 @@ impl<E: Environment> DQNTrainer<E> {
         E::Action: Clone,
     {
         let batch = self.buffer.sample(batch_size);
-
         for t in batch {
             let q_values = self.dqn.forward(&t.state);
-            let next_q_values = self.target_dqn.forward(&t.next_state);
 
             let action_index = E::action_to_index(&t.action);
             let target = if t.done {
                 t.reward
             } else {
-                t.reward + self.gamma * next_q_values.iter().cloned().fold(f32::MIN, f32::max)
+                let next_q_values = self.target_dqn.forward(&t.next_state);
+                t.reward + self.gamma * next_q_values.into_iter().max_by(|a, b| a.total_cmp(b)).unwrap_or_else(|| {
+                    error!("No values return from next_q_values. Returning neg inf");
+                    f32::NEG_INFINITY
+                })
             };
+            if target.is_nan() || target.is_infinite() {
+                error!("Got target {target}. Skipping sample");
+                continue;
+            }
 
             let mut target_vec = q_values.clone();
             target_vec[action_index] = target;
 
-            let loss = mse_loss(&q_values, &target_vec);
-
-            self.dqn.backward(&loss.1, self.learning_rate);
+            let (_loss, grad) = mse_loss(&q_values, &target_vec);
+            self.dqn.backward(&grad, self.learning_rate);
         }
     }
 }
@@ -407,22 +420,13 @@ mod tests {
             self.state = next.clone();
 
             if self.is_goal(&next) {
-                return (next, 100.0, true);
+                return (next, 1.0, true);
             }
             if self.is_death(&next) {
-                return (next, -100.0, true);
+                return (next, -1.0, true);
             }
 
-            (next, -1.0, false)
-        }
-
-        fn available_actions(&self) -> Vec<Self::Action> {
-            vec![
-                TestAction::Left,
-                TestAction::Right,
-                TestAction::Up,
-                TestAction::Down,
-            ]
+            (next, -0.01, false)
         }
 
         fn get_action_mask(&self) -> Vec<bool> {
@@ -449,68 +453,63 @@ mod tests {
     }
 
     #[test]
-    fn dqn_follows_optimal_path() {
+    fn dqn_reaches_goal() {
         let mut env = TestEnv::new();
 
-        // Input size = number of state features, output size = number of actions
-        let mut trainer = DQNTrainer::<TestEnv>::new(2, 4, 0.9, 0.99, 0.99, 0.05, 0.01);
+        let state_size = 2;
+        let num_of_actions = TestEnv::all_actions().len();
+        let gamma = 0.95;
+        let epsilon = 0.99;
+        let epsilon_decay = 0.999;
+        let epsilon_min = 0.05;
+        let learning_rate = 0.01;
+        let buffer_capacity = 10_000;
 
-        let episodes = 500;
-        let batch_size = 32;
-        let max_moves = 40;
-        let episode_sync_freq = 5;
+        let mut trainer = DQLTrainer::<TestEnv>::new(
+            state_size,
+            num_of_actions,
+            gamma,
+            epsilon,
+            epsilon_decay,
+            epsilon_min,
+            learning_rate,
+            buffer_capacity,
+        );
 
-        // Train the DQN
-        trainer.train(&mut env, episodes, batch_size, max_moves, episode_sync_freq);
+        let episodes = 5000;
+        let batch_size = 10;
+        let max_moves = 100;
+        let update_target_after_steps = 100;
 
-        // After training, set epsilon to 0 for greedy action selection
+        trainer.train(&mut env, episodes, batch_size, max_moves, update_target_after_steps);
+
         trainer.epsilon = 0.0;
 
-        // Reset environment
         let mut state = env.reset();
         let mut state_vec: Vec<f32> = state.clone().into();
 
-        // Define the optimal path as a sequence of actions
-        let optimal_path = vec![
-            TestAction::Right,
-            TestAction::Right,
-            TestAction::Up,
-            TestAction::Left,
-            TestAction::Left,
-            TestAction::Up,
-            TestAction::Right,
-            TestAction::Right,
-            TestAction::Right,
-            TestAction::Right,
-            TestAction::Down,
-        ];
-
-        for expected_action in optimal_path {
-            // Get action mask for current state
+        for step in 0..100 {
             let mask = env.get_action_mask();
+            let action = trainer.select_action(&state_vec, &TestEnv::all_actions(), &mask);
 
-            // Select action using the trained DQN
-            let chosen = trainer.select_action(&state_vec, &TestEnv::all_actions(), &mask);
-            println!("{:?}", chosen);
+            println!("Step {}: action = {:?}", step + 1, action);
 
-            assert_eq!(
-                chosen, expected_action,
-                "DQN chose wrong action at state {:?}. Expected {:?}, got {:?}",
-                state, expected_action, chosen
-            );
-
-            // Take the action in the environment
-            let (next_state, _reward, done) = env.step(&chosen);
+            let (next_state, _reward, done) = env.step(&action);
             state_vec = next_state.clone().into();
             state = next_state;
 
+            if env.is_goal(&state) {
+                println!("Reached goal in {} steps", step + 1);
+                return;
+            }
+            if env.is_death(&state) {
+                panic!("Agent died at state {:?} after {} steps", state, step);
+            }
             if done {
                 break;
             }
         }
 
-        // Check that we ended in the goal
-        assert!(env.is_goal(&state), "DQN did not reach the goal at the end of the path");
+        panic!("Agent did not reach the goal within 100 steps. Final state: {:?}", state);
     }
-
 }

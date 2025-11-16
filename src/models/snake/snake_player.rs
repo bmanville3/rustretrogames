@@ -8,6 +8,9 @@ pub const MAX_QUEUE_SIZE: usize = 3;
 /// Snake player in the [`crate::models::snake::snake_game::SnakeGame`].
 #[derive(Clone, Debug)]
 pub struct SnakePlayer {
+    // TODO: Get rid of bot/real player
+    //      Let the callers handle who is a bot or a real play
+    //      To the backing game, its all the same anyways
     pub is_bot: bool,
     pub squares_taken: VecDeque<(usize, usize)>,
     pub last_action: SnakeAction,

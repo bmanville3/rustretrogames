@@ -1,11 +1,13 @@
+use serde::{Deserialize, Serialize};
+
 use crate::deep::{layer::Layer, linear::{Linear, WeightInit}, relu::ReLU, sequential::{LayerEnum, Sequential}};
 
-#[derive(Debug, Clone)]
-pub struct DQN {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DQL {
     net: Sequential,
 }
 
-impl DQN {
+impl DQL {
     pub fn new(input_dim: usize, output_dim: usize) -> Self {
         let mut net = Sequential::new();
         net.add(LayerEnum::Linear(Linear::new(input_dim, 128, WeightInit::He)));
@@ -14,7 +16,7 @@ impl DQN {
         net.add(LayerEnum::ReLU(ReLU::new()));
         net.add(LayerEnum::Linear(Linear::new(64, output_dim, WeightInit::He)));
         net.add(LayerEnum::ReLU(ReLU::new()));
-        DQN { net }
+        DQL { net }
     }
 
     pub fn forward(&mut self, input: &[f32]) -> Vec<f32> {

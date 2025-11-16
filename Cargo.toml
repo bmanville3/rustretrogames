@@ -9,4 +9,6 @@ env_logger = "0.11.7"
 iced = { version = "0.13.1", features = ["async-std"] }
 rand = "0.8.5"
 rand_distr = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1.44.1", features = ["full"] }

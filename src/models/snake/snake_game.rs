@@ -121,6 +121,9 @@ impl SnakeGame {
     ///
     /// Panics if casting from usize to i64 and back fails. This is never expected to happen.
     pub fn new(num_of_bots: usize, num_of_real_players: usize, board_size: usize) -> Result<Self> {
+        // TODO: Get rid of bot/real player
+        //      Let the callers handle who is a bot or a real play
+        //      To the backing game, its all the same anyways
         let num_players = num_of_bots + num_of_real_players;
         // Error if the game is invalid
         if !(1..=MAX_NUM_OF_TOTAL_PLAYERS).contains(&num_players) {

@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::deep::{layer::Layer, linear::Linear, relu::ReLU};
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LayerEnum {
     Linear(Linear),
     ReLU(ReLU),
@@ -25,7 +27,7 @@ impl LayerEnum {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sequential {
     layers: Vec<LayerEnum>,
 }

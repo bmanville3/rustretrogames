@@ -8,7 +8,6 @@ where
 
     fn reset(&mut self) -> Self::State;
     fn step(&mut self, action: &Self::Action) -> (Self::State, f32, bool);
-    fn available_actions(&self) -> Vec<Self::Action>;
     fn get_action_mask(&self) -> Vec<bool>;
 
     fn all_actions() -> Vec<Self::Action>;

@@ -1,16 +1,17 @@
 use rand::Rng;
 use rand_distr::{Normal, Distribution};
+use serde::{Deserialize, Serialize};
 
 use crate::deep::layer::Layer;
 
 /// Weight initialization schemes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WeightInit {
     He,
     Uniform(f32),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Linear {
     pub weights: Vec<Vec<f32>>,
     pub biases: Vec<f32>,
