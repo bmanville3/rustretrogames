@@ -2,11 +2,13 @@ use std::cmp::max;
 
 use crate::{
     models::snake::snake_game::{
-        BOUNDARY, MAX_BOARD_SIZE, MAX_NUM_OF_REAL_PLAYERS, MAX_NUM_OF_TOTAL_PLAYERS,
+        BOUNDARY, MAX_BOARD_SIZE, MAX_NUM_OF_TOTAL_PLAYERS,
         MIN_BOARD_SIZE, MIN_INCR,
     },
     view_model::ViewModel,
 };
+
+const MAX_NUM_OF_REAL_PLAYERS: usize = 2;
 
 #[derive(Debug)]
 pub struct SnakeSelectionViewModel {}

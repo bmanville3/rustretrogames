@@ -1,3 +1,2 @@
-pub mod dql_model;
 pub mod environment;
-pub mod q_learning;
+pub mod double_dql;

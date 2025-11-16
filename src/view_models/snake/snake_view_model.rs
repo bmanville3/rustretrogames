@@ -12,7 +12,7 @@ use crate::{
     app::Message,
     models::snake::{
         snake_bot::SnakeBotType,
-        snake_game::{PartialSnakeGame, SnakeAction, SnakeError, SnakeGame, MILLIS_BETWEEN_FRAMES},
+        snake_game::{SnakeAction, SnakeError, SnakeGame, MILLIS_BETWEEN_FRAMES},
     },
     view_model::ViewModel,
     views::snake::{snake_game_screen::SnakeGameMessage, snake_mediator::SnakeMessage},
@@ -32,7 +32,7 @@ pub enum ChannelMessage {
     Game(SnakeGame),
     MoveRealPlayer((usize, SnakeAction)),
     TickBoard,
-    Input(PartialSnakeGame),
+    Input(SnakeGame),
     BotMove((usize, SnakeAction)),
     Kill,
 }
@@ -57,31 +57,39 @@ impl SnakeViewModel {
     /// be created, returns a [`SnakeError`].
     pub fn new(params: SnakeParams) -> Result<Self, SnakeError> {
         debug!("New SnakeViewModel params: {:#?}", params);
+        // make the backing game
         let number_of_real_players = params.number_of_real_players;
+        let total_players = params.number_of_bots + number_of_real_players;
         let model = SnakeGame::new(
-            params.number_of_bots,
-            number_of_real_players,
+            total_players,
             params.grid_size,
         )?;
+        
+        // assign the first entries to real players
         let mut real_player_1_index = None;
         let mut real_player_2_index = None;
+        let mut start_bot_index = 0;
+        if number_of_real_players >= 1 {
+            real_player_1_index = Some(0);
+            start_bot_index += 1;
+        }
+        if number_of_real_players >= 2 {
+            real_player_2_index = Some(1);
+            start_bot_index += 1;
+        }
+
+        // assign the rest of the entries to boths
         let mut bot_threads = HashMap::with_capacity(params.number_of_bots * 2);
         let (sender_to_main_loop, receiver_for_main_loop) = mpsc::channel::<ChannelMessage>();
-        for s in model.get_all_players() {
-            if s.is_bot {
-                bot_threads.insert(
-                    s.player_id,
-                    Self::make_bot_thread(
-                        &params.bot_type,
-                        s.player_id,
-                        sender_to_main_loop.clone(),
-                    ),
-                );
-            } else if real_player_1_index.is_none() {
-                real_player_1_index = Some(s.player_id);
-            } else {
-                real_player_2_index = Some(s.player_id);
-            }
+        for i in start_bot_index..total_players {
+            bot_threads.insert(
+                i,
+                Self::make_bot_thread(
+                    &params.bot_type,
+                    i,
+                    sender_to_main_loop.clone(),
+                ),
+            );
         }
         Ok(Self {
             params,
@@ -181,8 +189,7 @@ impl SnakeViewModel {
                                 {
                                     bots_to_remove.push(*bot_id);
                                 } else {
-                                    let partial = PartialSnakeGame::from_full(model.clone());
-                                    match sender.send(ChannelMessage::Input(partial)) {
+                                    match sender.send(ChannelMessage::Input(model.clone())) {
                                         Ok(()) => (),
                                         Err(e) => error!(
                                             "Error sending message to bot thread {bot_id}: {e}"
@@ -291,7 +298,7 @@ impl SnakeViewModel {
                     ChannelMessage::Input(snake_game) => {
                         if let Err(e) = sender_to_view_model.send(ChannelMessage::BotMove((
                             bot.get_player_index(),
-                            bot.make_move(snake_game),
+                            bot.make_move(&snake_game),
                         ))) {
                             error!("Problem sending BotMove message: {}", e);
                         }
@@ -356,6 +363,17 @@ impl SnakeViewModel {
         MILLIS_BETWEEN_FRAMES
     }
 
+    pub fn get_real_player_indices(&self) -> Vec<usize> {
+        let mut indices = Vec::new();
+        if let Some(rp1i) = self.real_player_1_index {
+            indices.push(rp1i);
+        }
+        if let Some(rp2i) = self.real_player_2_index {
+            indices.push(rp2i);
+        }
+        indices
+    }
+
     #[must_use]
     pub fn real_players_lost_inner(
         model: &SnakeGame,
@@ -364,7 +382,7 @@ impl SnakeViewModel {
         number_of_real_players: usize,
     ) -> bool {
         // either no real players or only real players -> real players never lose
-        if number_of_real_players == 0 || number_of_real_players == model.get_all_players().len() {
+        if number_of_real_players == 0 || number_of_real_players == model.get_number_of_players() {
             return false;
         }
         let sp1_opt = if let Some(indx1) = rp1_indx {

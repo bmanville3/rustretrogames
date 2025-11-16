@@ -2,7 +2,7 @@ use log::error;
 
 use crate::models::snake::{
     snake_bot::SnakeBot,
-    snake_game::{PartialSnakeGame, SnakeAction, SnakeBlock},
+    snake_game::{SnakeGame, SnakeAction, SnakeBlock},
 };
 
 #[derive(Debug)]
@@ -17,21 +17,21 @@ impl MoveToClosestAppleBot {
 
     fn find_closest_reachable_apple(
         &self,
-        game_state: &PartialSnakeGame,
+        game_state: &SnakeGame,
         head: (usize, usize),
     ) -> Option<(i8, i8)> {
         self.bfs_towards_goal(
             game_state,
             head,
-            &|x, y| matches!(game_state.grid[x][y], SnakeBlock::Apple),
+            &|x, y| matches!(game_state.get_grid()[x][y], SnakeBlock::Apple),
             None,
         )
     }
 }
 
 impl SnakeBot for MoveToClosestAppleBot {
-    fn make_move(&self, game_state: PartialSnakeGame) -> SnakeAction {
-        let our_head = match game_state.snake_heads[self.player_indx] {
+    fn make_move(&self, game_state: &SnakeGame) -> SnakeAction {
+        let our_snake = match game_state.get_all_players().get(self.player_indx) {
             Some(pos) => pos,
             None => {
                 error!("Snake head not found for player {}", self.player_indx);
@@ -39,10 +39,14 @@ impl SnakeBot for MoveToClosestAppleBot {
             }
         };
 
-        let last_move = *game_state
-            .last_movements
-            .get(self.player_indx)
-            .unwrap_or(&(0, 0));
+        let last_move = our_snake.last_action.value();
+        let our_head = match our_snake.get_head() {
+            Some(oh) => oh,
+            None => {
+                error!("Tried to make a move with a dead snake");
+                return SnakeAction::get_random_action();
+            }
+        };
 
         // Compute the preferred direction toward the closest apple
         let target_move_opt = self.find_closest_reachable_apple(&game_state, our_head);

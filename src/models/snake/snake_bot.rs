@@ -1,15 +1,15 @@
 use std::collections::VecDeque;
 
-use crate::models::snake::{bots::killer_bot::KillerBot, snake_game::SnakeBlock};
+use crate::models::snake::{bots::killer_bot::KillerBot, snake_game::{SnakeBlock, SnakeGame}};
 
 use super::{
     bots::move_to_closest_apple_bot::MoveToClosestAppleBot,
     bots::random_snake_bot::RandomBot,
-    snake_game::{PartialSnakeGame, SnakeAction},
+    snake_game::SnakeAction,
 };
 
 pub trait SnakeBot: Send + Sync {
-    fn make_move(&self, game_state: PartialSnakeGame) -> SnakeAction;
+    fn make_move(&self, game_state: &SnakeGame) -> SnakeAction;
 
     fn get_player_index(&self) -> usize;
 
@@ -18,7 +18,7 @@ pub trait SnakeBot: Send + Sync {
         next_move: (i8, i8),
         head: (usize, usize),
         last_move: (i8, i8),
-        game_state: &PartialSnakeGame,
+        game_state: &SnakeGame,
     ) -> bool {
         if (next_move.0, next_move.1) == (-last_move.0, -last_move.1) {
             return false;
@@ -30,14 +30,14 @@ pub trait SnakeBot: Send + Sync {
         let new_x = head.0 as isize + next_move.0 as isize;
         let new_y = head.1 as isize + next_move.1 as isize;
 
-        if new_x < 0 || new_x >= game_state.grid.len() as isize {
+        if new_x < 0 || new_x >= game_state.get_size() as isize {
             return false;
         }
-        if new_y < 0 || new_y >= game_state.grid[0].len() as isize {
+        if new_y < 0 || new_y >= game_state.get_size() as isize {
             return false;
         }
 
-        match game_state.grid[new_x as usize][new_y as usize] {
+        match game_state.get_grid()[new_x as usize][new_y as usize] {
             SnakeBlock::Empty | SnakeBlock::Apple => true,
             _ => false,
         }
@@ -47,7 +47,7 @@ pub trait SnakeBot: Send + Sync {
     /// This move is guaranteed to be valid and safe if present.
     fn bfs_towards_goal(
         &self,
-        game_state: &PartialSnakeGame,
+        game_state: &SnakeGame,
         head: (usize, usize),
         is_goal: &(dyn Fn(usize, usize) -> bool),
         max_depth: Option<usize>,
@@ -55,9 +55,8 @@ pub trait SnakeBot: Send + Sync {
         if is_goal(head.0, head.1) {
             return None;
         }
-
-        let rows = game_state.grid.len();
-        let cols = game_state.grid[0].len();
+        let rows = game_state.get_size();
+        let cols = game_state.get_size();
 
         let mut visited = vec![false; rows * cols];
         let mut queue = VecDeque::new();

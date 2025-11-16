@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, time::Instant};
+use std::{cmp::max, collections::VecDeque};
 
 use log::{debug, info, warn};
 use rand::{seq::SliceRandom, Rng};
@@ -12,8 +12,6 @@ pub const PLAYER_MOVEMENT_CAP: u64 = MILLIS_BETWEEN_FRAMES / 10;
 
 // These are all defined as usize since they are used a lot with indexing stuff.
 
-/// Max number of real players allowed.
-pub const MAX_NUM_OF_REAL_PLAYERS: usize = 2;
 /// Max num of total players allowed.
 pub const MAX_NUM_OF_TOTAL_PLAYERS: usize = 6;
 /// Max board size.
@@ -47,7 +45,7 @@ pub enum SnakeBlock {
 }
 
 /// Action a [`SnakePlayer`] can take in the [`SnakeGame`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SnakeAction {
     Up,
     Down,
@@ -120,23 +118,16 @@ impl SnakeGame {
     /// # Panics
     ///
     /// Panics if casting from usize to i64 and back fails. This is never expected to happen.
-    pub fn new(num_of_bots: usize, num_of_real_players: usize, board_size: usize) -> Result<Self> {
-        // TODO: Get rid of bot/real player
-        //      Let the callers handle who is a bot or a real play
-        //      To the backing game, its all the same anyways
-        let num_players = num_of_bots + num_of_real_players;
+    pub fn new(num_of_players: usize, board_size: usize) -> Result<Self> {
         // Error if the game is invalid
-        if !(1..=MAX_NUM_OF_TOTAL_PLAYERS).contains(&num_players) {
+        if !(1..=MAX_NUM_OF_TOTAL_PLAYERS).contains(&num_of_players) {
             return Err(SnakeError::InvalidPlayerCount);
         }
         if !(MIN_BOARD_SIZE..=MAX_BOARD_SIZE).contains(&board_size) {
             return Err(SnakeError::InvalidBoardSize);
         }
-        if num_of_real_players > MAX_NUM_OF_REAL_PLAYERS {
-            return Err(SnakeError::TooManyReals);
-        }
-        let incr = (board_size - 2 * BOUNDARY) / num_players;
-        if num_players > 1 && incr < MIN_INCR {
+        let incr = (board_size - 2 * BOUNDARY) / num_of_players;
+        if num_of_players > 1 && incr < MIN_INCR {
             return Err(SnakeError::InvalidBoardPlayerRatio);
         }
         let mut grid: Vec<Vec<SnakeBlock>> = Vec::with_capacity(board_size);
@@ -148,14 +139,13 @@ impl SnakeGame {
             grid.push(row);
         }
 
-        let mut snakes: Vec<SnakePlayer> = Vec::with_capacity(num_players);
+        let mut snakes: Vec<SnakePlayer> = Vec::with_capacity(num_of_players);
 
-        if num_players == 1 {
+        if num_of_players == 1 {
             let player_one_loc = board_size / 4;
             grid[player_one_loc][player_one_loc] = SnakeBlock::SnakeHead(0);
             grid[player_one_loc - 1][player_one_loc] = SnakeBlock::SnakeBody(0);
             let mut ns = SnakePlayer::new(
-                num_of_bots == 1,
                 player_one_loc,
                 player_one_loc,
                 0,
@@ -175,17 +165,16 @@ impl SnakeGame {
                 }
                 i += incr;
             }
-            if starting_positions.len() < num_players {
+            if starting_positions.len() < num_of_players {
                 return Err(SnakeError::NotEnoughStarts);
             }
-            let mut are_bots = vec![false; num_of_real_players];
-            are_bots.extend(vec![true; num_of_bots]);
-            for (i, is_bot) in are_bots.iter().enumerate() {
-                let start_indx = rand::thread_rng().gen_range(0..starting_positions.len());
-                let start = starting_positions[start_indx];
+
+            let positions = starting_positions.choose_multiple(&mut rand::thread_rng(), num_of_players);
+
+            for (i, start) in positions.enumerate() {
                 let starting_action = SnakeAction::get_random_action();
                 let op = starting_action.get_opposite().value();
-                let mut ns = SnakePlayer::new(*is_bot, start.0, start.1, i, starting_action);
+                let mut ns = SnakePlayer::new(start.0, start.1, i, starting_action);
                 grid[start.0][start.1] = SnakeBlock::SnakeHead(i);
                 // skill issues of adding numbers shines through again
                 let bx =
@@ -195,7 +184,6 @@ impl SnakeGame {
                 grid[bx][by] = SnakeBlock::SnakeBody(i);
                 ns.squares_taken.push_back((bx, by));
                 snakes.push(ns);
-                starting_positions.remove(start_indx);
             }
         }
 
@@ -205,7 +193,7 @@ impl SnakeGame {
             board_size,
             winner: None,
         };
-        new_game.put_random_apples(num_players);
+        new_game.put_random_apples(num_of_players);
         Ok(new_game)
     }
 
@@ -272,7 +260,6 @@ impl SnakeGame {
         &mut self,
         snake_indx: usize,
         action: SnakeAction,
-        new_time: Option<Instant>,
     ) -> bool {
         if self.winner.is_some() {
             debug!("Trid to move snake {} after winner found", snake_indx);
@@ -344,9 +331,6 @@ impl SnakeGame {
                     return false;
                 }
             }
-            if new_time.is_some() {
-                snake.time_of_last_action = new_time.unwrap();
-            }
             snake.last_action = action;
         }
         if replace_apple {
@@ -369,7 +353,7 @@ impl SnakeGame {
         for i in 0..ids_and_actions.len() {
             let id = ids_and_actions[i].0;
             let action = &ids_and_actions[i].1;
-            self.move_character(id, action.clone(), Some(Instant::now()));
+            self.move_character(id, action.clone());
             if self.get_winner().is_some() {
                 return;
             }
@@ -409,34 +393,12 @@ impl SnakeGame {
     pub fn get_all_players(&self) -> &Vec<SnakePlayer> {
         &self.snakes
     }
-}
 
-impl Default for SnakeGame {
-    fn default() -> Self {
-        Self::new(3, 1, MAX_BOARD_SIZE).unwrap()
+    pub fn get_number_of_players(&self) -> usize {
+        self.snakes.len()
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct PartialSnakeGame {
-    pub grid: Vec<Vec<SnakeBlock>>,
-    pub snake_heads: Vec<Option<(usize, usize)>>,
-    pub last_movements: Vec<(i8, i8)>,
-}
-
-impl PartialSnakeGame {
-    #[must_use]
-    pub fn from_full(game: SnakeGame) -> Self {
-        let mut snake_heads = Vec::new();
-        let mut last_movements = Vec::new();
-        for snake in game.snakes {
-            snake_heads.push(snake.get_head());
-            last_movements.push(snake.last_action.value());
-        }
-        Self {
-            grid: game.grid,
-            snake_heads,
-            last_movements,
-        }
+    pub fn get_min_grid_size(total_players: usize) -> usize {
+        max(total_players * MIN_INCR + 2 * BOUNDARY + 1, MIN_BOARD_SIZE)
     }
 }

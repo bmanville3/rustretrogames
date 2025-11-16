@@ -1,12 +1,12 @@
-//! Module to perform the Deep Q Learning algorithm.
+//! Module to perform the Double Deep Q Learning algorithm.
 use core::f32;
 use std::collections::VecDeque;
 
 use log::{error, info};
 use rand::Rng;
 
+use crate::deep::layer::Layer;
 use crate::deep::mse::mse_loss;
-use crate::rl::dql_model::DQL;
 use crate::rl::environment::Environment;
 
 /// A single experience tuple used for DQL training.
@@ -72,15 +72,15 @@ impl<A: Clone> ReplayBuffer<A> {
     }
 }
 
-/// A trainer implementing the Deep Q-Network (DQL) algorithm.
+/// A trainer implementing the Double Deep Q-Network (DQL) algorithm.
 /// 
 /// # Type Parameters
 /// - `E`: The environment type, implementing the `Environment` trait.
-pub struct DQLTrainer<E: Environment> {
+pub struct DoubleDQLTrainer<E: Environment, T: Layer + Clone> {
     /// The Deep Q learning network to train.
-    dqn: DQL,
+    dql: T,
     /// The target network to use in training.
-    target_dqn: DQL,
+    target_dql: T,
     /// Replay buffer of seen actions.
     buffer: ReplayBuffer<E::Action>,
     /// Weight decay for future rewards.
@@ -95,15 +95,13 @@ pub struct DQLTrainer<E: Environment> {
     learning_rate: f32,
 }
 
-impl<E: Environment> DQLTrainer<E> {
-    pub fn new(state_size: usize, num_of_actions: usize, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32, buffer_capacity: usize) -> Self {
-        let dqn = DQL::new(state_size, num_of_actions);
-        let target_dqn = DQL::new(state_size, num_of_actions);
+impl<E: Environment, T: Layer + Clone> DoubleDQLTrainer<E, T> {
+    pub fn new(dql: T, target_dql: T, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32, buffer_capacity: usize) -> Self {
         let buffer = ReplayBuffer::new(buffer_capacity);
 
         Self {
-            dqn,
-            target_dqn,
+            dql,
+            target_dql,
             buffer,
             gamma,
             epsilon,
@@ -147,7 +145,7 @@ impl<E: Environment> DQLTrainer<E> {
             }
         }
 
-        let mut q_values = self.dqn.forward(state);
+        let mut q_values = self.dql.forward(state);
 
         if has_valid_actions {
             for (i, valid) in action_mask.iter().enumerate() {
@@ -206,7 +204,7 @@ impl<E: Environment> DQLTrainer<E> {
                     self.learn(batch_size);
                     steps += 1;
                     if steps % update_target_after_steps == 0 {
-                        self.target_dqn = self.dqn.clone();
+                        self.target_dql = self.dql.clone();
                     }
                 }
 
@@ -242,20 +240,20 @@ impl<E: Environment> DQLTrainer<E> {
     {
         let batch = self.buffer.sample(batch_size);
         for t in batch {
-            let q_values = self.dqn.forward(&t.state);
+            let q_values = self.dql.forward(&t.state);
 
             let action_index = E::action_to_index(&t.action);
             let target = if t.done {
                 t.reward
             } else {
-                let next_q_values = self.target_dqn.forward(&t.next_state);
+                let next_q_values = self.target_dql.forward(&t.next_state);
                 t.reward + self.gamma * next_q_values.into_iter().max_by(|a, b| a.total_cmp(b)).unwrap_or_else(|| {
                     error!("No values return from next_q_values. Returning neg inf");
                     f32::NEG_INFINITY
                 })
             };
             if target.is_nan() || target.is_infinite() {
-                error!("Got target {target}. Skipping sample");
+                error!("Got target {target}. Skipping sample.");
                 continue;
             }
 
@@ -263,13 +261,15 @@ impl<E: Environment> DQLTrainer<E> {
             target_vec[action_index] = target;
 
             let (_loss, grad) = mse_loss(&q_values, &target_vec);
-            self.dqn.backward(&grad, self.learning_rate);
+            self.dql.backward(&grad, self.learning_rate);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::deep::{linear::{Linear, WeightInit}, relu::ReLU, sequential::{LayerEnum, Sequential}};
+
     use super::*;
 
     // ---------------------------
@@ -398,6 +398,16 @@ mod tests {
                 TestAction::Down => TestState { row: state.row + 1, col: state.col },
             }
         }
+
+        fn get_model() -> Sequential {
+            let mut seq = Sequential::new();
+            seq.add(LayerEnum::Linear(Linear::new(2, 30, WeightInit::He)));
+            seq.add(LayerEnum::ReLU(ReLU::new()));
+            seq.add(LayerEnum::Linear(Linear::new(30, 30, WeightInit::He)));
+            seq.add(LayerEnum::ReLU(ReLU::new()));
+            seq.add(LayerEnum::Linear(Linear::new(30, 4, WeightInit::He)));
+            seq
+        }
     }
 
     impl Into<Vec<f32>> for TestState {
@@ -453,11 +463,10 @@ mod tests {
     }
 
     #[test]
-    fn dqn_reaches_goal() {
+    fn double_dql_reaches_goal() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let mut env = TestEnv::new();
 
-        let state_size = 2;
-        let num_of_actions = TestEnv::all_actions().len();
         let gamma = 0.95;
         let epsilon = 0.99;
         let epsilon_decay = 0.999;
@@ -465,9 +474,12 @@ mod tests {
         let learning_rate = 0.01;
         let buffer_capacity = 10_000;
 
-        let mut trainer = DQLTrainer::<TestEnv>::new(
-            state_size,
-            num_of_actions,
+        let dql = TestEnv::get_model();
+        let target_dql = TestEnv::get_model();
+
+        let mut trainer = DoubleDQLTrainer::<TestEnv, Sequential>::new(
+            dql,
+            target_dql,
             gamma,
             epsilon,
             epsilon_decay,

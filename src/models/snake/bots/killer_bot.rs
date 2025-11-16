@@ -3,7 +3,7 @@ use rand::Rng;
 
 use crate::models::snake::{
     snake_bot::SnakeBot,
-    snake_game::{PartialSnakeGame, SnakeAction},
+    snake_game::{SnakeGame, SnakeAction},
 };
 
 #[derive(Debug)]
@@ -18,20 +18,21 @@ impl KillerBot {
 
     fn front_cell_of_snake(
         &self,
-        game_state: &PartialSnakeGame,
+        game_state: &SnakeGame,
         other_index: usize,
     ) -> Option<(usize, usize)> {
-        let rows = game_state.grid.len();
-        let cols = game_state.grid[0].len();
+        let rows = game_state.get_size();
+        let cols = game_state.get_size();
 
-        let other_head = match game_state.snake_heads[other_index] {
+        let other_snake = match game_state.get_all_players().get(other_index) {
             Some(pos) => pos,
             None => return None,
         };
-        let other_last_move = *game_state
-            .last_movements
-            .get(other_index)
-            .unwrap_or(&(0, 0));
+        let other_head = match other_snake.get_head() {
+            Some(h) => h,
+            None => return None,
+        };
+        let other_last_move = other_snake.last_action.value();
         let nx_is = other_head.0 as isize + other_last_move.0 as isize;
         let ny_is = other_head.1 as isize + other_last_move.1 as isize;
         if nx_is < 0 || ny_is < 0 {
@@ -47,12 +48,12 @@ impl KillerBot {
 
     fn find_nearest_opponent_front(
         &self,
-        game_state: &PartialSnakeGame,
+        game_state: &SnakeGame,
         my_head: (usize, usize),
     ) -> Option<((usize, usize), usize)> {
         let mut best: Option<((usize, usize), usize, usize)> = None; // (cell, idx, distance)
 
-        for i in 0..game_state.snake_heads.len() {
+        for i in 0..game_state.get_number_of_players() {
             if i == self.player_indx {
                 continue;
             }
@@ -78,7 +79,7 @@ impl KillerBot {
 
     fn find_nearby_apple_step(
         &self,
-        game_state: &PartialSnakeGame,
+        game_state: &SnakeGame,
         head: (usize, usize),
         max_dist: usize,
     ) -> Option<(i8, i8)> {
@@ -87,7 +88,7 @@ impl KillerBot {
             head,
             &|x, y| {
                 matches!(
-                    game_state.grid[x][y],
+                    game_state.get_grid()[x][y],
                     crate::models::snake::snake_game::SnakeBlock::Apple
                 )
             },
@@ -97,8 +98,8 @@ impl KillerBot {
 }
 
 impl SnakeBot for KillerBot {
-    fn make_move(&self, game_state: PartialSnakeGame) -> SnakeAction {
-        let our_head = match game_state.snake_heads[self.player_indx] {
+    fn make_move(&self, game_state: &SnakeGame) -> SnakeAction {
+        let our_snake = match game_state.get_all_players().get(self.player_indx) {
             Some(pos) => pos,
             None => {
                 error!("Snake head not found for player {}", self.player_indx);
@@ -106,10 +107,14 @@ impl SnakeBot for KillerBot {
             }
         };
 
-        let last_move = *game_state
-            .last_movements
-            .get(self.player_indx)
-            .unwrap_or(&(0, 0));
+        let last_move = our_snake.last_action.value();
+        let our_head = match our_snake.get_head() {
+            Some(h) => h,
+            None => {
+                error!("Tried to move a dead snake");
+                return SnakeAction::get_random_action()
+            }
+        };
 
         // prefer eating an apple if its within 3 steps
         if let Some(step_to_apple) = self.find_nearby_apple_step(&game_state, our_head, 3) {

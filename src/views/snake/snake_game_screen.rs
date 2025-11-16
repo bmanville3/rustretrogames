@@ -100,10 +100,10 @@ impl View for SnakeGameScreen {
                     SnakeBlock::SnakeHead(player) => self.make_container(
                         format!(
                             "{}{}",
-                            if snake_game.get_all_players()[*player].is_bot {
-                                "B"
-                            } else {
+                            if self.view_model.get_real_player_indices().contains(player) {
                                 "P"
+                            } else {
+                                "B"
                             },
                             player + 1
                         ),
@@ -147,18 +147,20 @@ impl View for SnakeGameScreen {
         .height(Length::Fill)
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center);
-        let winner = snake_game.get_winner();
-        if winner.is_some() {
+        let winner_string = |pindx: usize| {
+            if self.view_model.get_real_player_indices().contains(&pindx) {
+                format!("Player {}", pindx + 1)
+            } else {
+                "Bots".to_string()
+            }
+        };
+        if let Some(winner) = snake_game.get_winner() {
             return column!(
                 game,
                 if self.view_model.get_number_of_players() > 1 {
                     text(format!(
                         "GAME OVER. {} WON!",
-                        snake_game
-                            .get_all_players()
-                            .get(winner.unwrap())
-                            .unwrap()
-                            .get_name()
+                        winner_string(winner)
                     ))
                 } else {
                     text("GAME OVER")

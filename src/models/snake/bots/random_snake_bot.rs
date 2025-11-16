@@ -1,6 +1,6 @@
 use crate::models::snake::{
     snake_bot::SnakeBot,
-    snake_game::{PartialSnakeGame, SnakeAction},
+    snake_game::{SnakeGame, SnakeAction},
 };
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ impl RandomBot {
 }
 
 impl SnakeBot for RandomBot {
-    fn make_move(&self, _game_state: PartialSnakeGame) -> SnakeAction {
+    fn make_move(&self, _game_state: &SnakeGame) -> SnakeAction {
         SnakeAction::get_random_action()
     }
 
