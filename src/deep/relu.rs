@@ -1,5 +1,6 @@
 use crate::deep::layer::Layer;
 
+#[derive(Debug, Clone)]
 pub struct ReLU {
     mask: Vec<bool>,
 }
@@ -11,7 +12,7 @@ impl ReLU {
 }
 
 impl Layer for ReLU {
-    fn forward(&mut self, input: &[f32]) -> Vec<f32> {
+    fn _forward(&mut self, input: &[f32]) -> Vec<f32> {
         self.mask = input.iter().map(|&x| x > 0.0).collect();
         input
             .iter()
@@ -19,7 +20,7 @@ impl Layer for ReLU {
             .collect()
     }
 
-    fn backward(&mut self, grad_output: &[f32], _lr: f32) -> Vec<f32> {
+    fn _backward(&mut self, grad_output: &[f32], _lr: f32) -> Vec<f32> {
         grad_output
             .iter()
             .zip(self.mask.iter())
@@ -37,12 +38,12 @@ mod tests {
         let mut relu = ReLU::new();
 
         let input = vec![-1.0, 0.0, 2.0, -3.5, 4.0];
-        let output = relu.forward(&input);
+        let output = relu._forward(&input);
         assert_eq!(output, vec![0.0, 0.0, 2.0, 0.0, 4.0]);
 
         // Gradient should pass through only for positive elements
         let grad_output = vec![1.0, 1.0, 1.0, 1.0, 1.0];
-        let grad_input = relu.backward(&grad_output, 0.0);
+        let grad_input = relu._backward(&grad_output, 0.0);
         assert_eq!(grad_input, vec![0.0, 0.0, 1.0, 0.0, 1.0]);
     }
 }

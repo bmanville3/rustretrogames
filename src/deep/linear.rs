@@ -1,7 +1,16 @@
 use rand::Rng;
+use rand_distr::{Normal, Distribution};
 
 use crate::deep::layer::Layer;
 
+/// Weight initialization schemes
+#[derive(Debug, Clone)]
+pub enum WeightInit {
+    He,
+    Uniform(f32),
+}
+
+#[derive(Debug, Clone)]
 pub struct Linear {
     pub weights: Vec<Vec<f32>>,
     pub biases: Vec<f32>,
@@ -9,11 +18,23 @@ pub struct Linear {
 }
 
 impl Linear {
-    pub fn new(input_size: usize, output_size: usize) -> Self {
+    pub fn new(input_size: usize, output_size: usize, init: WeightInit) -> Self {
         let mut rng = rand::thread_rng();
-        let weights = (0..output_size)
-            .map(|_| (0..input_size).map(|_| rng.gen_range(-0.1..0.1)).collect())
-            .collect();
+        let weights: Vec<Vec<f32>> = match init {
+            WeightInit::He => {
+                // He initialization: Normal(0, sqrt(2 / fan_in))
+                let std = (2.0 / input_size as f32).sqrt();
+                let normal = Normal::new(0.0, std).unwrap();
+                (0..output_size)
+                    .map(|_| (0..input_size).map(|_| normal.sample(&mut rng) as f32).collect())
+                    .collect()
+            }
+            WeightInit::Uniform(limit) => {
+                (0..output_size)
+                    .map(|_| (0..input_size).map(|_| rng.gen_range(-limit..limit)).collect())
+                    .collect()
+            }
+        };
         let biases = vec![0.0; output_size];
         Self {
             weights,
@@ -24,7 +45,7 @@ impl Linear {
 }
 
 impl Layer for Linear {
-    fn forward(&mut self, input: &[f32]) -> Vec<f32> {
+    fn _forward(&mut self, input: &[f32]) -> Vec<f32> {
         self.input_cache = input.to_vec();
         self.weights
             .iter()
@@ -33,7 +54,7 @@ impl Layer for Linear {
             .collect()
     }
 
-    fn backward(&mut self, grad_output: &[f32], lr: f32) -> Vec<f32> {
+    fn _backward(&mut self, grad_output: &[f32], lr: f32) -> Vec<f32> {
         let input = &self.input_cache;
 
         // Gradient w.r.t input
@@ -70,7 +91,7 @@ mod tests {
         };
 
         let input = vec![2.0, 3.0];
-        let output = layer.forward(&input);
+        let output = layer._forward(&input);
 
         // Expected:
         // neuron 0: 0.5*2 + (-0.5)*3 + 0.1 = -0.4
@@ -93,7 +114,7 @@ mod tests {
         let lr = 0.1;
 
         // Gradient w.r.t input = weights^T * grad_output = [2, 4]
-        let grad_input = layer.backward(&grad_output, lr);
+        let grad_input = layer._backward(&grad_output, lr);
         assert_eq!(grad_input, vec![2.0, 4.0]);
 
         // Weight updates: w -= lr * grad_output * input
