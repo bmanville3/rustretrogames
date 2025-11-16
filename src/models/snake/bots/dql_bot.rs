@@ -1,7 +1,7 @@
 use log::error;
 use rand::{Rng, seq::SliceRandom, thread_rng};
 
-use crate::{deep::{linear::{Linear, WeightInit}, relu::ReLU, sequential::{LayerEnum, Sequential}}, models::snake::{
+use crate::{deep::{linear::{StatelessLinear, WeightInit}, relu::{StatelessReLU}, sequential::{Sequential, StatelessLayerEnum}}, models::snake::{
     snake_bot::{SnakeBot, SnakeBotType},
     snake_game::{MAX_BOARD_SIZE, MAX_NUM_OF_TOTAL_PLAYERS, SnakeAction, SnakeBlock, SnakeError, SnakeGame},
 }, rl::{double_dql::DoubleDQLTrainer, environment::Environment}};
@@ -104,11 +104,11 @@ impl SnakeGameEnv {
 
     pub fn get_model() -> Sequential {
         let mut seq = Sequential::new();
-        seq.add(LayerEnum::Linear(Linear::new(FULL_STATE_SIZE, 30, WeightInit::He)));
-        seq.add(LayerEnum::ReLU(ReLU::new()));
-        seq.add(LayerEnum::Linear(Linear::new(30, 30, WeightInit::He)));
-        seq.add(LayerEnum::ReLU(ReLU::new()));
-        seq.add(LayerEnum::Linear(Linear::new(30, SnakeAction::VARIANTS.len(), WeightInit::He)));
+        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(FULL_STATE_SIZE, 30, WeightInit::He)));
+        seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
+        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
+        seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
+        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, SnakeAction::VARIANTS.len(), WeightInit::He)));
         seq
     }
 }
@@ -254,14 +254,14 @@ impl SnakeBot for DQLBot {
 
 #[cfg(test)]
 mod tests {
-    use crate::deep::{linear::{Linear, WeightInit},  sequential::{LayerEnum, Sequential}};
+    use crate::deep::{linear::{StatelessLinear, WeightInit},  sequential::{StatelessLayerEnum, Sequential}};
 
     use super::*;
 
     fn get_basic_model() -> Sequential {
         let mut seq = Sequential::new();
-        seq.add(LayerEnum::Linear(Linear::new(FULL_STATE_SIZE, 1, WeightInit::He)));
-        seq.add(LayerEnum::Linear(Linear::new(1, SnakeAction::VARIANTS.len(), WeightInit::He)));
+        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(FULL_STATE_SIZE, 1, WeightInit::He)));
+        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(1, SnakeAction::VARIANTS.len(), WeightInit::He)));
         seq
     }
 

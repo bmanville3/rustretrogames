@@ -2,7 +2,7 @@ use rand::Rng;
 use rand_distr::{Normal, Distribution};
 use serde::{Deserialize, Serialize};
 
-use crate::deep::layer::Layer;
+use crate::deep::layer::{StatefulLayer, StatelessLayer};
 
 /// Weight initialization schemes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,13 +12,12 @@ pub enum WeightInit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Linear {
+pub struct StatelessLinear {
     pub weights: Vec<Vec<f32>>,
     pub biases: Vec<f32>,
-    pub input_cache: Vec<f32>,
 }
 
-impl Linear {
+impl StatelessLinear {
     pub fn new(input_size: usize, output_size: usize, init: WeightInit) -> Self {
         let mut rng = rand::thread_rng();
         let weights: Vec<Vec<f32>> = match init {
@@ -40,24 +39,20 @@ impl Linear {
         Self {
             weights,
             biases,
-            input_cache: vec![],
         }
     }
 }
 
-impl Layer for Linear {
-    fn _forward(&mut self, input: &[f32]) -> Vec<f32> {
-        self.input_cache = input.to_vec();
-        self.weights
+impl StatelessLayer<f32> for StatelessLinear {
+    fn _forward(&mut self, input: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        (self.weights
             .iter()
             .zip(self.biases.iter())
             .map(|(w_row, b)| w_row.iter().zip(input).map(|(w, x)| w * x).sum::<f32>() + b)
-            .collect()
+            .collect(), vec![])
     }
 
-    fn _backward(&mut self, grad_output: &[f32], lr: f32) -> Vec<f32> {
-        let input = &self.input_cache;
-
+    fn _backward(&mut self, input: &[f32], grad_output: &[f32], lr: f32, _intermediate_caches: &Vec<f32>) -> Vec<f32> {
         // Gradient w.r.t input
         let mut grad_input = vec![0.0; input.len()];
 
@@ -79,6 +74,34 @@ impl Layer for Linear {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Linear {
+    pub stateless_linear: StatelessLinear,
+    pub input_cache: Vec<f32>,
+}
+
+impl Linear {
+    pub fn new(input_size: usize, output_size: usize, init: WeightInit) -> Self {
+        Self {
+            stateless_linear: StatelessLinear::new(input_size, output_size, init),
+            input_cache: vec![],
+        }
+    }
+}
+
+impl StatefulLayer for Linear {
+    fn _forward(&mut self, input: &[f32]) -> Vec<f32> {
+        self.input_cache = input.to_vec();
+        let (out, _) = self.stateless_linear._forward(input);
+        out
+    }
+
+    fn _backward(&mut self, grad_output: &[f32], learning_rate: f32) -> Vec<f32> {
+        let input = &self.input_cache;
+        self.stateless_linear._backward(input, grad_output, learning_rate, &vec![])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,8 +109,7 @@ mod tests {
     #[test]
     fn test_linear_forward() {
         let mut layer = Linear {
-            weights: vec![vec![0.5, -0.5], vec![1.0, 2.0]],
-            biases: vec![0.1, -0.2],
+            stateless_linear: StatelessLinear { weights: vec![vec![0.5, -0.5], vec![1.0, 2.0]], biases: vec![0.1, -0.2] },
             input_cache: vec![],
         };
 
@@ -106,8 +128,8 @@ mod tests {
     #[test]
     fn test_linear_backward_updates_weights() {
         let mut layer = Linear {
-            weights: vec![vec![1.0, 2.0]],
-            biases: vec![0.5],
+            stateless_linear: StatelessLinear {weights: vec![vec![1.0, 2.0]],
+            biases: vec![0.5]},
             input_cache: vec![3.0, 4.0],
         };
 
@@ -121,10 +143,10 @@ mod tests {
         // Weight updates: w -= lr * grad_output * input
         //   dw = 0.1 * 2.0 * [3, 4] = [0.6, 0.8]
         //   => w = [1.0 - 0.6, 2.0 - 0.8] = [0.4, 1.2]
-        assert!((layer.weights[0][0] - 0.4).abs() < 1e-6);
-        assert!((layer.weights[0][1] - 1.2).abs() < 1e-6);
+        assert!((layer.stateless_linear.weights[0][0] - 0.4).abs() < 1e-6);
+        assert!((layer.stateless_linear.weights[0][1] - 1.2).abs() < 1e-6);
 
         // Bias update: b -= lr * grad_output = 0.5 - 0.2 = 0.3
-        assert!((layer.biases[0] - 0.3).abs() < 1e-6);
+        assert!((layer.stateless_linear.biases[0] - 0.3).abs() < 1e-6);
     }
 }

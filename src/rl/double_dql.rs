@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use log::{error, info};
 use rand::Rng;
 
-use crate::deep::layer::Layer;
+use crate::deep::layer::StatefulLayer;
 use crate::deep::mse::mse_loss;
 use crate::rl::environment::Environment;
 
@@ -76,7 +76,7 @@ impl<A: Clone> ReplayBuffer<A> {
 /// 
 /// # Type Parameters
 /// - `E`: The environment type, implementing the `Environment` trait.
-pub struct DoubleDQLTrainer<E: Environment, T: Layer + Clone> {
+pub struct DoubleDQLTrainer<E: Environment, T: StatefulLayer + Clone> {
     /// The Deep Q learning network to train.
     dql: T,
     /// The target network to use in training.
@@ -95,7 +95,7 @@ pub struct DoubleDQLTrainer<E: Environment, T: Layer + Clone> {
     learning_rate: f32,
 }
 
-impl<E: Environment, T: Layer + Clone> DoubleDQLTrainer<E, T> {
+impl<E: Environment, T: StatefulLayer + Clone> DoubleDQLTrainer<E, T> {
     pub fn new(dql: T, target_dql: T, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32, buffer_capacity: usize) -> Self {
         let buffer = ReplayBuffer::new(buffer_capacity);
 
@@ -268,7 +268,7 @@ impl<E: Environment, T: Layer + Clone> DoubleDQLTrainer<E, T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::deep::{linear::{Linear, WeightInit}, relu::ReLU, sequential::{LayerEnum, Sequential}};
+    use crate::deep::{linear::{StatelessLinear, WeightInit}, relu::StatelessReLU, sequential::{Sequential, StatelessLayerEnum}};
 
     use super::*;
 
@@ -401,11 +401,11 @@ mod tests {
 
         fn get_model() -> Sequential {
             let mut seq = Sequential::new();
-            seq.add(LayerEnum::Linear(Linear::new(2, 30, WeightInit::He)));
-            seq.add(LayerEnum::ReLU(ReLU::new()));
-            seq.add(LayerEnum::Linear(Linear::new(30, 30, WeightInit::He)));
-            seq.add(LayerEnum::ReLU(ReLU::new()));
-            seq.add(LayerEnum::Linear(Linear::new(30, 4, WeightInit::He)));
+            seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(2, 30, WeightInit::He)));
+            seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
+            seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
+            seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
+            seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, 4, WeightInit::He)));
             seq
         }
     }
