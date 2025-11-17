@@ -1,8 +1,7 @@
 use log::debug;
 use rustretrogames::app::State;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     std::env::set_var("RUST_LOG", "rustretrogames=debug");
     env_logger::init();
     debug!("Debug on");
