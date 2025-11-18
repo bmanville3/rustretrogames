@@ -115,23 +115,22 @@ impl SnakeBot for KillerBot {
                 return SnakeAction::get_random_action()
             }
         };
-
-        // prefer eating an apple if its within 3 steps
-        if let Some(step_to_apple) = self.find_nearby_apple_step(&game_state, our_head, 3) {
-            let action =
-                SnakeAction::get_enum_variant_from_values(step_to_apple.0, step_to_apple.1);
-            if let Ok(a) = action {
-                return a;
-            } else {
-                error!(
-                    "Apple BFS returned invalid move: {:#?}. Trying to find head instead",
-                    action.err()
-                );
-            }
-        }
-
         // add a tiny bit of randomness so bots dont just go side-by-side up and down the board
         if rand::thread_rng().gen::<f32>() < 0.95 {
+            // prefer eating an apple if its within 3 steps
+            if let Some(step_to_apple) = self.find_nearby_apple_step(&game_state, our_head, 3) {
+                let action =
+                    SnakeAction::get_enum_variant_from_values(step_to_apple.0, step_to_apple.1);
+                if let Ok(a) = action {
+                    return a;
+                } else {
+                    error!(
+                        "Apple BFS returned invalid move: {:#?}. Trying to find head instead",
+                        action.err()
+                    );
+                }
+            }
+
             if let Some((target_cell, _opponent_idx)) =
                 self.find_nearest_opponent_front(&game_state, our_head)
             {

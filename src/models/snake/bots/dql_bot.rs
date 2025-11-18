@@ -1,7 +1,11 @@
-use log::error;
+use std::{fs::{self, File}, io::{BufReader, BufWriter}, path::PathBuf};
+
+use chrono::Local;
+use log::{error, info};
+use once_cell::sync::Lazy;
 use rand::{Rng, seq::SliceRandom, thread_rng};
 
-use crate::{deep::{linear::{StatelessLinear, WeightInit}, relu::{StatelessReLU}, sequential::{Sequential, StatelessLayerEnum}}, models::snake::{
+use crate::{deep::{linear::{StatelessLinear, WeightInit}, relu::StatelessReLU, sequential::{SequentialLayer, StatelessSequential}}, models::snake::{
     snake_bot::{SnakeBot, SnakeBotType},
     snake_game::{MAX_BOARD_SIZE, MAX_NUM_OF_TOTAL_PLAYERS, SnakeAction, SnakeBlock, SnakeError, SnakeGame},
 }, rl::{double_dql::DoubleDQLTrainer, environment::Environment}};
@@ -9,6 +13,50 @@ use crate::{deep::{linear::{StatelessLinear, WeightInit}, relu::{StatelessReLU},
 const SNAKE_CHANNEL_SIZE: usize = MAX_BOARD_SIZE * MAX_BOARD_SIZE + SnakeAction::VARIANTS.len() + 2;
 const OTHER_CHANNEL_SIZE: usize = MAX_BOARD_SIZE * MAX_BOARD_SIZE;
 const FULL_STATE_SIZE: usize = SNAKE_CHANNEL_SIZE * MAX_NUM_OF_TOTAL_PLAYERS + 2 * OTHER_CHANNEL_SIZE;
+
+static NEWEST_MODEL: Lazy<StatelessSequential> = Lazy::new(get_newest_snake_model);
+
+fn get_newest_snake_model() -> StatelessSequential {
+    let models_dir = PathBuf::from("trained_models");
+    std::fs::create_dir_all(&models_dir).unwrap();
+
+    // Look for an existing model JSON
+    let newest_model_file = fs::read_dir(&models_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let path = entry.path();
+            path.is_file() && path.extension().map(|ext| ext == "json").unwrap_or(false)
+        })
+        .max_by_key(|entry| entry.path().file_stem().map(|s| s.to_os_string()).unwrap_or_default()); 
+
+    let model_path = if let Some(file) = newest_model_file {
+        file.path()
+    } else {
+        // No model found, create a new timestamped file
+        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        models_dir.join(format!("model_{}.json", timestamp))
+    };
+
+    if model_path.exists() {
+        // Load existing model
+        info!("Loading existing Snake model from {:?}", model_path);
+        let file = File::open(&model_path).unwrap();
+        let reader = BufReader::new(file);
+        serde_json::from_reader(reader).unwrap()
+    } else {
+        // Create new model
+        info!("No existing Snake model found. Creating a new one at {:?}", model_path);
+        let model = SnakeGameEnv::get_model();
+
+        // Save it immediately
+        let file = File::create(&model_path).unwrap();
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &model).unwrap();
+
+        model
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SnakeGameVec {
@@ -23,32 +71,35 @@ impl SnakeGameVec {
 
         // build the player channels
         let all_players = game.get_all_players();
-        for player in all_players {
+        for i in 0..MAX_NUM_OF_TOTAL_PLAYERS {
             let mut channel: Vec<f32> = vec![0.0; SNAKE_CHANNEL_SIZE];
-            if player.is_alive() {
-                for (row, col) in &player.squares_taken {
-                    channel[row * MAX_BOARD_SIZE + col] = 1.0
-                }
-                let movement = match player.last_action {
-                    SnakeAction::Up => (1.0, 0.0, 0.0, 0.0),
-                    SnakeAction::Down => (0.0, 1.0, 0.0, 0.0),
-                    SnakeAction::Left => (0.0, 0.0, 1.0, 0.0),
-                    SnakeAction::Right => (0.0, 0.0, 0.0, 1.0),
-                };
-                channel[SNAKE_CHANNEL_SIZE - 6] = movement.0;
-                channel[SNAKE_CHANNEL_SIZE - 5] = movement.1;
-                channel[SNAKE_CHANNEL_SIZE - 4] = movement.2;
-                channel[SNAKE_CHANNEL_SIZE - 3] = movement.3;
-                let (head_r, head_c) = match player.get_head() {
-                    Some(h) => h,
-                    None => {
-                        error!("Play was not dead but had a head still");
-                        continue;
+            if i < all_players.len() {
+                let player = &all_players[i];
+                if player.is_alive() {
+                    for (row, col) in &player.squares_taken {
+                        channel[row * MAX_BOARD_SIZE + col] = 1.0
                     }
-                };
-                // scale to stabalize learning (particularly prevent exploding gradient)
-                channel[SNAKE_CHANNEL_SIZE - 2] = head_r as f32 / MAX_BOARD_SIZE as f32;
-                channel[SNAKE_CHANNEL_SIZE - 1] = head_c as f32 / MAX_BOARD_SIZE as f32;
+                    let movement = match player.last_action {
+                        SnakeAction::Up => (1.0, 0.0, 0.0, 0.0),
+                        SnakeAction::Down => (0.0, 1.0, 0.0, 0.0),
+                        SnakeAction::Left => (0.0, 0.0, 1.0, 0.0),
+                        SnakeAction::Right => (0.0, 0.0, 0.0, 1.0),
+                    };
+                    channel[SNAKE_CHANNEL_SIZE - 6] = movement.0;
+                    channel[SNAKE_CHANNEL_SIZE - 5] = movement.1;
+                    channel[SNAKE_CHANNEL_SIZE - 4] = movement.2;
+                    channel[SNAKE_CHANNEL_SIZE - 3] = movement.3;
+                    let (head_r, head_c) = match player.get_head() {
+                        Some(h) => h,
+                        None => {
+                            error!("Play was not dead but had a head still");
+                            continue;
+                        }
+                    };
+                    // scale to stabalize learning (particularly prevent exploding gradient)
+                    channel[SNAKE_CHANNEL_SIZE - 2] = head_r as f32 / MAX_BOARD_SIZE as f32;
+                    channel[SNAKE_CHANNEL_SIZE - 1] = head_c as f32 / MAX_BOARD_SIZE as f32;
+                }
             }
 
             full_state.extend(channel);
@@ -102,13 +153,15 @@ impl SnakeGameEnv {
         Ok(Self { game, bots, number_of_enemies })
     }
 
-    pub fn get_model() -> Sequential {
-        let mut seq = Sequential::new();
-        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(FULL_STATE_SIZE, 30, WeightInit::He)));
-        seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
-        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
-        seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
-        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, SnakeAction::VARIANTS.len(), WeightInit::He)));
+    pub fn get_model() -> StatelessSequential {
+        let mut seq = StatelessSequential::new();
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(FULL_STATE_SIZE, FULL_STATE_SIZE / 64, WeightInit::He)));
+        seq.add(SequentialLayer::ReLU(StatelessReLU::new()));
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(FULL_STATE_SIZE / 64, FULL_STATE_SIZE / 128, WeightInit::He)));
+        seq.add(SequentialLayer::ReLU(StatelessReLU::new()));
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(FULL_STATE_SIZE / 128, FULL_STATE_SIZE / 256, WeightInit::He)));
+        seq.add(SequentialLayer::ReLU(StatelessReLU::new()));
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(FULL_STATE_SIZE / 256, SnakeAction::VARIANTS.len(), WeightInit::He)));
         seq
     }
 }
@@ -203,7 +256,7 @@ impl DQLBot {
         Self { player_indx }
     }
 
-    pub fn train_new_bot(get_model_func: fn() -> Sequential) {
+    pub fn train_new_bot() {
         let mut env = match SnakeGameEnv::new() {
             Ok(s) => s,
             Err(e) => {
@@ -218,12 +271,10 @@ impl DQLBot {
         let learning_rate = 0.0001;
         let buffer_capacity = 10_000;
 
-        let dql = get_model_func();
-        let target_dql = get_model_func();
+        let dql = NEWEST_MODEL.clone();
 
-        let mut trainer = DoubleDQLTrainer::<SnakeGameEnv, Sequential>::new(
+        let mut trainer = DoubleDQLTrainer::<SnakeGameEnv, StatelessSequential>::new(
             dql,
-            target_dql,
             gamma,
             epsilon,
             epsilon_decay,
@@ -232,12 +283,19 @@ impl DQLBot {
             buffer_capacity,
         );
 
-        let episodes = 5000;
-        let batch_size = 10;
-        let max_moves = 100;
+        let episodes = 50000;
+        let batch_size = 100;
+        let max_moves = 1000;
         let update_target_after_steps = 1000;
 
-        trainer.train(&mut env, episodes, batch_size, max_moves, update_target_after_steps);
+        let models_dir = PathBuf::from("trained_models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        // Generate a timestamped filename
+        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        let file_path = models_dir.join(format!("model_{}.json", timestamp));
+
+        trainer.train(&mut env, episodes, batch_size, max_moves, update_target_after_steps, Some(file_path.as_path()));
     }
 }
 
@@ -254,21 +312,12 @@ impl SnakeBot for DQLBot {
 
 #[cfg(test)]
 mod tests {
-    use crate::deep::{linear::{StatelessLinear, WeightInit},  sequential::{StatelessLayerEnum, Sequential}};
-
     use super::*;
-
-    fn get_basic_model() -> Sequential {
-        let mut seq = Sequential::new();
-        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(FULL_STATE_SIZE, 1, WeightInit::He)));
-        seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(1, SnakeAction::VARIANTS.len(), WeightInit::He)));
-        seq
-    }
 
     #[test]
     fn snake_training_work() {
         let _ = env_logger::builder().is_test(true).try_init();
-        DQLBot::train_new_bot(get_basic_model);
+        DQLBot::train_new_bot();
     }
 }
 

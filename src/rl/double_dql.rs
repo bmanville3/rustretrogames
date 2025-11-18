@@ -1,11 +1,14 @@
 //! Module to perform the Double Deep Q Learning algorithm.
 use core::f32;
 use std::collections::VecDeque;
+use std::fs::{self, File};
+use std::io::BufWriter;
+use std::path::Path;
 
 use log::{error, info};
 use rand::Rng;
 
-use crate::deep::layer::StatefulLayer;
+use crate::deep::layer::{StatefulLayerWrapper, StatelessLayer};
 use crate::deep::mse::mse_loss;
 use crate::rl::environment::Environment;
 
@@ -76,11 +79,11 @@ impl<A: Clone> ReplayBuffer<A> {
 /// 
 /// # Type Parameters
 /// - `E`: The environment type, implementing the `Environment` trait.
-pub struct DoubleDQLTrainer<E: Environment, T: StatefulLayer + Clone> {
+pub struct DoubleDQLTrainer<E: Environment, T: StatelessLayer + Clone> {
     /// The Deep Q learning network to train.
-    dql: T,
+    dql: StatefulLayerWrapper<T>,
     /// The target network to use in training.
-    target_dql: T,
+    target_dql: StatefulLayerWrapper<T>,
     /// Replay buffer of seen actions.
     buffer: ReplayBuffer<E::Action>,
     /// Weight decay for future rewards.
@@ -95,13 +98,13 @@ pub struct DoubleDQLTrainer<E: Environment, T: StatefulLayer + Clone> {
     learning_rate: f32,
 }
 
-impl<E: Environment, T: StatefulLayer + Clone> DoubleDQLTrainer<E, T> {
-    pub fn new(dql: T, target_dql: T, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32, buffer_capacity: usize) -> Self {
+impl<E: Environment, T: StatelessLayer + Clone> DoubleDQLTrainer<E, T> {
+    pub fn new(dql: T, gamma: f32, epsilon: f32, epsilon_decay: f32, epsilon_min: f32, learning_rate: f32, buffer_capacity: usize) -> Self {
         let buffer = ReplayBuffer::new(buffer_capacity);
 
         Self {
-            dql,
-            target_dql,
+            dql: StatefulLayerWrapper::new(dql.clone()),
+            target_dql: StatefulLayerWrapper::new(dql),
             buffer,
             gamma,
             epsilon,
@@ -176,7 +179,16 @@ impl<E: Environment, T: StatefulLayer + Clone> DoubleDQLTrainer<E, T> {
     /// - Store transitions in the replay buffer
     /// - Every batch_size samples, perform gradient steps
     /// - Decay epsilon between episodes
-    pub fn train(&mut self, env: &mut E, num_episodes: usize, batch_size: usize, max_moves: usize, update_target_after_steps: usize) {
+    pub fn train(&mut self, env: &mut E, num_episodes: usize, batch_size: usize, max_moves: usize, update_target_after_steps: usize, save_model_loc: Option<&Path>) {
+        if let Some(loc) = save_model_loc {
+            if loc.exists() {
+                panic!("Cannot proceed. Already a model at {:?}", save_model_loc);
+            } else if let Some(parent) = loc.parent() {
+                if !parent.exists() {
+                    panic!("Directory {:?} does not exist", parent);
+                }
+            }
+        }
         let actions = E::all_actions();
         let mut steps = 0;
         let mut total_reward = 0.0;
@@ -204,7 +216,17 @@ impl<E: Environment, T: StatefulLayer + Clone> DoubleDQLTrainer<E, T> {
                     self.learn(batch_size);
                     steps += 1;
                     if steps % update_target_after_steps == 0 {
+                        info!("Updating target");
                         self.target_dql = self.dql.clone();
+                        if let Some(loc) = save_model_loc {
+                            info!("Save model at {:?}", loc);
+                            let tmp_path = loc.with_extension("tmp");
+                            let tmp_file = File::create(&tmp_path).unwrap();
+                            let writer = BufWriter::new(tmp_file);
+
+                            serde_json::to_writer_pretty(writer, &self.dql.inner).unwrap();
+                            fs::rename(tmp_path, loc).unwrap();
+                        }
                     }
                 }
 
@@ -239,36 +261,79 @@ impl<E: Environment, T: StatefulLayer + Clone> DoubleDQLTrainer<E, T> {
         E::Action: Clone,
     {
         let batch = self.buffer.sample(batch_size);
-        for t in batch {
-            let q_values = self.dql.forward(&t.state);
 
-            let action_index = E::action_to_index(&t.action);
-            let target = if t.done {
-                t.reward
+        // Prepare vectors for batch forward/backward
+        let mut batch_states: Vec<&[f32]> = Vec::with_capacity(batch.len());
+        let mut batch_next_states: Vec<&[f32]> = Vec::with_capacity(batch.len());
+        let mut actions: Vec<usize> = Vec::with_capacity(batch.len());
+        let mut rewards: Vec<f32> = Vec::with_capacity(batch.len());
+        let mut dones: Vec<bool> = Vec::with_capacity(batch.len());
+
+        for t in &batch {
+            batch_states.push(&t.state);
+            batch_next_states.push(&t.next_state);
+            actions.push(E::action_to_index(&t.action));
+            rewards.push(t.reward);
+            dones.push(t.done);
+        }
+
+        // Forward pass for current states
+        let batch_q_values: Vec<Vec<f32>> = self.dql.forward_batch(&batch_states);
+
+        // Forward pass for next states
+        let batch_next_q_values: Vec<Vec<f32>> = self.target_dql.forward_batch(&batch_next_states);
+
+        // Build target vectors
+        let mut batch_targets: Vec<Vec<f32>> = Vec::with_capacity(batch.len());
+
+        for i in 0..batch.len() {
+            let mut target_vec = batch_q_values[i].clone();
+            let target_value = if dones[i] {
+                rewards[i]
             } else {
-                let next_q_values = self.target_dql.forward(&t.next_state);
-                t.reward + self.gamma * next_q_values.into_iter().max_by(|a, b| a.total_cmp(b)).unwrap_or_else(|| {
-                    error!("No values return from next_q_values. Returning neg inf");
-                    f32::NEG_INFINITY
-                })
+                rewards[i]
+                    + self.gamma
+                        * batch_next_q_values[i]
+                            .iter()
+                            .copied()
+                            .max_by(|a, b| a.total_cmp(b))
+                            .unwrap_or_else(|| {
+                                error!(
+                                    "No values returned from next_q_values for sample {}. Using -inf",
+                                    i
+                                );
+                                f32::NEG_INFINITY
+                            })
             };
-            if target.is_nan() || target.is_infinite() {
-                error!("Got target {target}. Skipping sample.");
-                continue;
+
+            if target_value.is_nan() || target_value.is_infinite() {
+                error!("Got target {target_value} for sample {}. Skipping.", i);
+                // For simplicity, we can just keep the original Q-values (no update)
+            } else {
+                target_vec[actions[i]] = target_value;
             }
 
-            let mut target_vec = q_values.clone();
-            target_vec[action_index] = target;
-
-            let (_loss, grad) = mse_loss(&q_values, &target_vec);
-            self.dql.backward(&grad, self.learning_rate);
+            batch_targets.push(target_vec);
         }
+
+        // Compute batch gradients using mse_loss
+        let mut batch_grads: Vec<Vec<f32>> = Vec::with_capacity(batch.len());
+        for (pred, target) in batch_q_values.iter().zip(batch_targets.iter()) {
+            let (_loss, grad) = mse_loss(pred, target);
+            batch_grads.push(grad);
+        }
+
+        // Convert to slices for backward_batch
+        let batch_grads_slices: Vec<&[f32]> = batch_grads.iter().map(|g| g.as_slice()).collect();
+
+        // Backpropagate the batch
+        self.dql.backward_batch(&batch_grads_slices, self.learning_rate);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::deep::{linear::{StatelessLinear, WeightInit}, relu::StatelessReLU, sequential::{Sequential, StatelessLayerEnum}};
+    use crate::deep::{linear::{StatelessLinear, WeightInit}, relu::StatelessReLU, sequential::StatelessSequential};
 
     use super::*;
 
@@ -399,13 +464,13 @@ mod tests {
             }
         }
 
-        fn get_model() -> Sequential {
-            let mut seq = Sequential::new();
-            seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(2, 30, WeightInit::He)));
-            seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
-            seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
-            seq.add(StatelessLayerEnum::ReLU(StatelessReLU::new()));
-            seq.add(StatelessLayerEnum::Linear(StatelessLinear::new(30, 4, WeightInit::He)));
+        fn get_model() -> StatelessSequential {
+            let mut seq = StatelessSequential::new();
+            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(2, 30, WeightInit::He)));
+            seq.add(crate::deep::sequential::SequentialLayer::ReLU(StatelessReLU::new()));
+            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
+            seq.add(crate::deep::sequential::SequentialLayer::ReLU(StatelessReLU::new()));
+            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(30, 4, WeightInit::He)));
             seq
         }
     }
@@ -471,15 +536,13 @@ mod tests {
         let epsilon = 0.99;
         let epsilon_decay = 0.999;
         let epsilon_min = 0.05;
-        let learning_rate = 0.01;
+        let learning_rate = 0.001;
         let buffer_capacity = 10_000;
 
         let dql = TestEnv::get_model();
-        let target_dql = TestEnv::get_model();
 
-        let mut trainer = DoubleDQLTrainer::<TestEnv, Sequential>::new(
+        let mut trainer = DoubleDQLTrainer::<TestEnv, StatelessSequential>::new(
             dql,
-            target_dql,
             gamma,
             epsilon,
             epsilon_decay,
@@ -493,7 +556,7 @@ mod tests {
         let max_moves = 100;
         let update_target_after_steps = 100;
 
-        trainer.train(&mut env, episodes, batch_size, max_moves, update_target_after_steps);
+        trainer.train(&mut env, episodes, batch_size, max_moves, update_target_after_steps, None);
 
         trainer.epsilon = 0.0;
 
