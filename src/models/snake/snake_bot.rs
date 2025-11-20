@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::models::snake::{bots::killer_bot::KillerBot, snake_game::{SnakeBlock, SnakeGame}};
+use crate::models::snake::{bots::{dql_bot::DQLBot, killer_bot::KillerBot}, snake_game::{SnakeBlock, SnakeGame}};
 
 use super::{
     bots::move_to_closest_apple_bot::MoveToClosestAppleBot,
@@ -115,11 +115,12 @@ pub enum SnakeBotType {
     ClosestAppleBot,
     KillerBot,
     RandomMoveBot,
+    DoubleDQLBot,
 }
 
 // this solution doesn't scale well but the number of bot types will be small so it works
 impl SnakeBotType {
-    pub const VALUES: [Self; 3] = [Self::RandomMoveBot, Self::ClosestAppleBot, Self::KillerBot];
+    pub const VALUES: [Self; 4] = [Self::RandomMoveBot, Self::ClosestAppleBot, Self::KillerBot, Self::DoubleDQLBot];
 
     #[must_use]
     pub fn make_new_bot(&self, player_indx: usize) -> Box<dyn SnakeBot> {
@@ -127,6 +128,7 @@ impl SnakeBotType {
             SnakeBotType::ClosestAppleBot => Box::new(MoveToClosestAppleBot::new(player_indx)),
             SnakeBotType::KillerBot => Box::new(KillerBot::new(player_indx)),
             SnakeBotType::RandomMoveBot => Box::new(RandomBot::new(player_indx)),
+            SnakeBotType::DoubleDQLBot => Box::new(DQLBot::new(player_indx)),
         }
     }
 }
@@ -137,6 +139,7 @@ impl std::fmt::Display for SnakeBotType {
             SnakeBotType::ClosestAppleBot => write!(f, "BFS Closest Apple Finding Bot"),
             SnakeBotType::KillerBot => write!(f, "BFS Killer Bot"),
             SnakeBotType::RandomMoveBot => write!(f, "Randomly Moving Bot"),
+            SnakeBotType::DoubleDQLBot => write!(f, "Double DQL Bot"),
         }
     }
 }

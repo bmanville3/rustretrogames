@@ -186,7 +186,7 @@ mod tests {
 
     use super::*;
     use crate::deep::{linear::WeightInit, mse::mse_loss};
-    use rand::{Rng, thread_rng};
+    use rand::{Rng, SeedableRng, rngs::StdRng, thread_rng};
 
     #[test]
     fn test_seq_forward() {
@@ -505,28 +505,29 @@ mod tests {
     }
 
     #[test]
-    fn test_input() {
+    fn test_speed_expected_data_sizes() {
         let input_size = 12836;
         let output_size = 4;
-        let mut rng = thread_rng();
+        let batch_size = 64;
+        let mut rng = StdRng::seed_from_u64(42);
         let mut seq = Sequential::new();
-        seq.add(SequentialLayer::Linear(StatelessLinear::new(input_size, 30, WeightInit::He)));
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(input_size, input_size / 2, WeightInit::FixedForTest)));
         seq.add(SequentialLayer::ReLU(StatelessReLU::new()));
-        seq.add(SequentialLayer::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(input_size / 2, input_size / 4, WeightInit::FixedForTest)));
         seq.add(SequentialLayer::ReLU(StatelessReLU::new()));
-        seq.add(SequentialLayer::Linear(StatelessLinear::new(30, output_size, WeightInit::He)));
+        seq.add(SequentialLayer::Linear(StatelessLinear::new(input_size / 4, output_size, WeightInit::FixedForTest)));
 
-        let mut data = Vec::new();
-        for _ in 0..10 {
-            let mut x = Vec::new();
+        let mut data = Vec::with_capacity(batch_size);
+        for _ in 0..batch_size {
+            let mut x = Vec::with_capacity(input_size);
             for _ in 0..input_size {
                 x.push(rng.gen_range(-1.0..1.0));
             }
             data.push(x);
         }
-        let mut y = Vec::new();
-        for _ in 0..10 {
-            let mut x = Vec::new();
+        let mut y = Vec::with_capacity(batch_size);
+        for _ in 0..batch_size {
+            let mut x = Vec::with_capacity(output_size);
             for _ in 0..output_size {
                 x.push(rng.gen_range(-1.0..1.0));
             }

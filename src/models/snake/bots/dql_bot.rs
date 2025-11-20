@@ -5,7 +5,7 @@ use log::{error, info};
 use once_cell::sync::Lazy;
 use rand::{Rng, seq::SliceRandom, thread_rng};
 
-use crate::{deep::{linear::{StatelessLinear, WeightInit}, relu::StatelessReLU, sequential::{SequentialLayer, StatelessSequential}}, models::snake::{
+use crate::{deep::{layer::StatelessLayer, linear::{StatelessLinear, WeightInit}, relu::StatelessReLU, sequential::{SequentialLayer, StatelessSequential}}, models::snake::{
     snake_bot::{SnakeBot, SnakeBotType},
     snake_game::{MAX_BOARD_SIZE, MAX_NUM_OF_TOTAL_PLAYERS, SnakeAction, SnakeBlock, SnakeError, SnakeGame},
 }, rl::{double_dql::DoubleDQLTrainer, environment::Environment}};
@@ -14,6 +14,8 @@ const SNAKE_CHANNEL_SIZE: usize = MAX_BOARD_SIZE * MAX_BOARD_SIZE + SnakeAction:
 const OTHER_CHANNEL_SIZE: usize = MAX_BOARD_SIZE * MAX_BOARD_SIZE;
 const FULL_STATE_SIZE: usize = SNAKE_CHANNEL_SIZE * MAX_NUM_OF_TOTAL_PLAYERS + 2 * OTHER_CHANNEL_SIZE;
 
+// TODO: Have this be lazy is causing problems
+//      need to implement a window before the game starts to let this warm up
 static NEWEST_MODEL: Lazy<StatelessSequential> = Lazy::new(get_newest_snake_model);
 
 fn get_newest_snake_model() -> StatelessSequential {
@@ -284,8 +286,8 @@ impl DQLBot {
         );
 
         let episodes = 50000;
-        let batch_size = 100;
-        let max_moves = 1000;
+        let batch_size = 64;
+        let max_moves = 500;
         let update_target_after_steps = 1000;
 
         let models_dir = PathBuf::from("trained_models");
@@ -300,8 +302,22 @@ impl DQLBot {
 }
 
 impl SnakeBot for DQLBot {
-    fn make_move(&self, _game_state: &SnakeGame) -> SnakeAction {
-        SnakeAction::get_random_action()
+    fn make_move(&self, game_state: &SnakeGame) -> SnakeAction {
+        let (index, value) = NEWEST_MODEL.forward(&SnakeGameVec::from_snake_game(game_state).vec).0.iter()
+                            .enumerate()
+                            .fold((0, f32::NEG_INFINITY), |(current_max_idx, current_max_val), (idx, &val)| {
+                                if val > current_max_val {
+                                    (idx, val)
+                                } else {
+                                    (current_max_idx, current_max_val)
+                                }
+                            });
+        if value.is_nan() || value.is_infinite() {
+            error!("Q value from bot was invalid");
+            return SnakeAction::get_random_action();
+        }
+        let action = &SnakeGameEnv::all_actions()[index];
+        action.clone()
     }
 
     fn get_player_index(&self) -> usize {

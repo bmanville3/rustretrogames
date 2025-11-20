@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::Path;
+use std::time::Instant;
 
 use log::{error, info};
 use rand::Rng;
@@ -189,6 +190,7 @@ impl<E: Environment, T: StatelessLayer + Clone> DoubleDQLTrainer<E, T> {
                 }
             }
         }
+        let start_time = Instant::now();
         let actions = E::all_actions();
         let mut steps = 0;
         let mut total_reward = 0.0;
@@ -227,6 +229,7 @@ impl<E: Environment, T: StatelessLayer + Clone> DoubleDQLTrainer<E, T> {
                             serde_json::to_writer_pretty(writer, &self.dql.inner).unwrap();
                             fs::rename(tmp_path, loc).unwrap();
                         }
+                        steps = 0;
                     }
                 }
 
@@ -246,6 +249,9 @@ impl<E: Environment, T: StatelessLayer + Clone> DoubleDQLTrainer<E, T> {
             }
             self.epsilon = (self.epsilon * self.epsilon_decay).max(self.epsilon_min);
         }
+        let end_time = Instant::now();
+        let duration = end_time.duration_since(start_time);
+        info!("Train took {duration:?}.\nParameters: num_episodes={num_episodes}, batch_size={batch_size}, max_moves={max_moves}, update_target_after_steps={update_target_after_steps}");
     }
 
     /// Perform one gradient-descent update on the DQL using a batch from replay.
@@ -307,8 +313,8 @@ impl<E: Environment, T: StatelessLayer + Clone> DoubleDQLTrainer<E, T> {
             };
 
             if target_value.is_nan() || target_value.is_infinite() {
-                error!("Got target {target_value} for sample {}. Skipping.", i);
-                // For simplicity, we can just keep the original Q-values (no update)
+                // by not setting the action -> mse(target, pred)=0 -> no update
+                error!("Got target {target_value} for sample {}. Not setting the target vec action", i);
             } else {
                 target_vec[actions[i]] = target_value;
             }
@@ -317,11 +323,7 @@ impl<E: Environment, T: StatelessLayer + Clone> DoubleDQLTrainer<E, T> {
         }
 
         // Compute batch gradients using mse_loss
-        let mut batch_grads: Vec<Vec<f32>> = Vec::with_capacity(batch.len());
-        for (pred, target) in batch_q_values.iter().zip(batch_targets.iter()) {
-            let (_loss, grad) = mse_loss(pred, target);
-            batch_grads.push(grad);
-        }
+        let batch_grads: Vec<Vec<f32>> = batch_q_values.iter().zip(batch_targets.iter()).map(|(pred, target)| mse_loss(pred, target).1).collect();
 
         // Convert to slices for backward_batch
         let batch_grads_slices: Vec<&[f32]> = batch_grads.iter().map(|g| g.as_slice()).collect();
@@ -364,8 +366,16 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq)]
     struct TestState {
-        row: usize,
-        col: usize,
+        goal_loc: (usize, usize),
+        player_loc: (usize, usize),
+        death_loc_1: (usize, usize),
+        death_loc_2: (usize, usize),
+    }
+
+    impl TestState {
+        pub fn new() -> Self {
+            Self { player_loc: (2, 0), goal_loc: (1, 4), death_loc_1: (2, 5), death_loc_2: (3, 2) }
+        }
     }
 
     struct TestEnv {
@@ -375,16 +385,16 @@ mod tests {
     impl TestEnv {
         fn new() -> Self {
             Self {
-                state: TestState { row: 2, col: 0 },
+                state: TestState::new(),
             }
         }
 
         fn is_goal(&self, s: &TestState) -> bool {
-            s.row == 1 && s.col == 4
+            s.player_loc == s.goal_loc
         }
 
         fn is_death(&self, s: &TestState) -> bool {
-            (s.row == 2 && s.col == 5) || (s.row == 3 && s.col == 2)
+            s.player_loc == s.death_loc_1 || s.player_loc == s.death_loc_2
         }
 
         fn get_action_mask_of_state(state: &TestState) -> Vec<bool> {
@@ -394,7 +404,7 @@ mod tests {
             let mut up = false;
             let mut down = false;
 
-            match (state.row, state.col) {
+            match (state.player_loc.0, state.player_loc.1) {
                 // Row 0
                 (0, 0) => right = true,
 
@@ -457,27 +467,25 @@ mod tests {
             }
 
             match action {
-                TestAction::Left => TestState { row: state.row, col: state.col - 1},
-                TestAction::Right => TestState { row: state.row, col: state.col + 1 },
-                TestAction::Up => TestState { row: state.row - 1, col: state.col },
-                TestAction::Down => TestState { row: state.row + 1, col: state.col },
+                TestAction::Left => TestState { player_loc: (state.player_loc.0, state.player_loc.1 - 1), ..state.clone() },
+                TestAction::Right => TestState { player_loc: (state.player_loc.0, state.player_loc.1 + 1), ..state.clone() },
+                TestAction::Up => TestState { player_loc: (state.player_loc.0 - 1, state.player_loc.1), ..state.clone() },
+                TestAction::Down => TestState { player_loc: (state.player_loc.0 + 1, state.player_loc.1), ..state.clone() },
             }
         }
 
         fn get_model() -> StatelessSequential {
             let mut seq = StatelessSequential::new();
-            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(2, 30, WeightInit::He)));
+            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(8, 8, WeightInit::He)));
             seq.add(crate::deep::sequential::SequentialLayer::ReLU(StatelessReLU::new()));
-            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(30, 30, WeightInit::He)));
-            seq.add(crate::deep::sequential::SequentialLayer::ReLU(StatelessReLU::new()));
-            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(30, 4, WeightInit::He)));
+            seq.add(crate::deep::sequential::SequentialLayer::Linear(StatelessLinear::new(8, 4, WeightInit::He)));
             seq
         }
     }
 
     impl Into<Vec<f32>> for TestState {
         fn into(self) -> Vec<f32> {
-            vec![self.row as f32, self.col as f32]
+            vec![self.player_loc.0 as f32, self.player_loc.1 as f32, self.goal_loc.0 as f32, self.goal_loc.1 as f32, self.death_loc_1.0 as f32, self.death_loc_1.1 as f32, self.death_loc_2.0 as f32, self.death_loc_2.1 as f32]
         }
     }
 
@@ -486,7 +494,7 @@ mod tests {
         type Action = TestAction;
 
         fn reset(&mut self) -> Self::State {
-            self.state = TestState { row: 2, col: 0 };
+            self.state = TestState::new();
             self.state.clone()
         }
 
@@ -551,7 +559,7 @@ mod tests {
             buffer_capacity,
         );
 
-        let episodes = 5000;
+        let episodes = 2500;
         let batch_size = 10;
         let max_moves = 100;
         let update_target_after_steps = 100;

@@ -8,6 +8,7 @@ use crate::deep::layer::{Layer, StatelessLayer, StatefulLayerWrapper};
 pub enum WeightInit {
     He,
     Uniform(f32),
+    FixedForTest
 }
 
 /// Stateless linear layer: implements core forward/backward logic
@@ -33,6 +34,11 @@ impl StatelessLinear {
                     .map(|_| (0..input_size).map(|_| rng.gen_range(-limit..limit)).collect())
                     .collect()
             }
+            WeightInit::FixedForTest => {
+                (0..output_size)
+                    .map(|i| (0..input_size).map(|j| ((i + j + 1) as isize * {if i + j % 2 == 0 { 1 } else { -1 }}) as f32 / (input_size + output_size + 1) as f32).collect())
+                    .collect()
+            },
         };
         let biases = vec![0.0; output_size];
         Self { weights, biases }
