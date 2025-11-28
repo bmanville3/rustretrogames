@@ -16,6 +16,8 @@ use crate::{
     views::snake::{snake_game_screen::SnakeGameMessage, snake_mediator::SnakeMessage},
 };
 
+const TICK_WAIT_TIME_BEFORE_START: usize = 10;
+
 #[derive(Clone, Debug)]
 pub struct SnakeParams {
     pub bot_type: Option<SnakeBotType>,
@@ -43,6 +45,7 @@ pub struct SnakeViewModel {
     last_model_fetched: SnakeGame,
     real_player_1_index: Option<usize>,
     real_player_2_index: Option<usize>,
+    ticks_seen: usize,
     game_over: bool,
 }
 
@@ -96,6 +99,7 @@ impl SnakeViewModel {
             real_player_1_index,
             real_player_2_index,
             game_over: false,
+            ticks_seen: 0
         })
     }
 
@@ -248,6 +252,7 @@ impl SnakeViewModel {
         let (sender_to_bot, receiver_for_bot) = mpsc::channel::<ChannelMessage>();
         let bot_handle = thread::spawn(move || {
             let mut bots: HashMap<usize, Box<dyn SnakeBot>> = indx_to_bot_type.into_iter().map(|(i, bt)| (i, bt.make_new_bot(i))).collect();
+            bots.iter_mut().for_each(|(_, b)| b.warmup());
             let mut recv_errors_in_a_row = 0;
             loop {
                 let message = match receiver_for_bot.recv() {
@@ -445,6 +450,9 @@ impl ViewModel for SnakeViewModel {
                             }
                             return None;
                         }
+                        if self.ticks_seen < TICK_WAIT_TIME_BEFORE_START {
+                            return None;
+                        }
                         if self.params.number_of_real_players == 0 {
                             return None;
                         }
@@ -488,6 +496,10 @@ impl ViewModel for SnakeViewModel {
                     }
                     SnakeGameMessage::Timer(_) => {
                         if self.game_over {
+                            return None;
+                        }
+                        self.ticks_seen += 1;
+                        if self.ticks_seen < TICK_WAIT_TIME_BEFORE_START {
                             return None;
                         }
                         if let Err(e) = self.sender_to_main_loop.send(ChannelMessage::TickBoard) {
