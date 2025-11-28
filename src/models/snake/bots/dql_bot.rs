@@ -1,4 +1,4 @@
-use std::{fs::{self, File}, io::{BufReader, BufWriter}, path::PathBuf};
+use std::{fs::{self, File}, io::{BufReader, BufWriter}, path::PathBuf, thread, time::Duration};
 
 use chrono::Local;
 use log::{debug, error, info};
@@ -314,6 +314,9 @@ impl DQLBot {
         std::fs::create_dir_all(&models_dir).unwrap();
 
         // Generate a timestamped filename
+        // sleep for 2 seconds to make sure we get a new time stamp
+        // this is not a great solution but considering training takes days i think we can wait 2 seconds
+        thread::sleep(Duration::from_secs(2));
         let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
         let file_path = models_dir.join(format!("model_{}.json", timestamp));
 
