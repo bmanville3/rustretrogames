@@ -108,6 +108,8 @@ pub trait SnakeBot: Send + Sync {
 
         None
     }
+
+    fn warmup(&mut self) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

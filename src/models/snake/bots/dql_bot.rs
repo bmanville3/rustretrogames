@@ -1,7 +1,7 @@
 use std::{fs::{self, File}, io::{BufReader, BufWriter}, path::PathBuf};
 
 use chrono::Local;
-use log::{error, info};
+use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use rand::{Rng, seq::SliceRandom, thread_rng};
 
@@ -14,8 +14,7 @@ const SNAKE_CHANNEL_SIZE: usize = MAX_BOARD_SIZE * MAX_BOARD_SIZE + SnakeAction:
 const OTHER_CHANNEL_SIZE: usize = MAX_BOARD_SIZE * MAX_BOARD_SIZE;
 const FULL_STATE_SIZE: usize = SNAKE_CHANNEL_SIZE * MAX_NUM_OF_TOTAL_PLAYERS + 2 * OTHER_CHANNEL_SIZE;
 
-// TODO: Have this be lazy is causing problems
-//      need to implement a window before the game starts to let this warm up
+
 static NEWEST_MODEL: Lazy<StatelessSequential> = Lazy::new(get_newest_snake_model);
 
 fn get_newest_snake_model() -> StatelessSequential {
@@ -66,45 +65,53 @@ pub struct SnakeGameVec {
 }
 
 impl SnakeGameVec {
-    pub fn from_snake_game(game: &SnakeGame) -> Self {
+    fn create_new_player_channel(game: &SnakeGame, player_id: usize) -> Vec<f32> {
+        let all_players = game.get_all_players();
+        let mut channel: Vec<f32> = vec![0.0; SNAKE_CHANNEL_SIZE];
+        if player_id < all_players.len() {
+            let player = &all_players[player_id];
+            if player.is_alive() {
+                for (row, col) in &player.squares_taken {
+                    channel[row * MAX_BOARD_SIZE + col] = 1.0
+                }
+                let movement = match player.last_action {
+                    SnakeAction::Up => (1.0, 0.0, 0.0, 0.0),
+                    SnakeAction::Down => (0.0, 1.0, 0.0, 0.0),
+                    SnakeAction::Left => (0.0, 0.0, 1.0, 0.0),
+                    SnakeAction::Right => (0.0, 0.0, 0.0, 1.0),
+                };
+                channel[SNAKE_CHANNEL_SIZE - 6] = movement.0;
+                channel[SNAKE_CHANNEL_SIZE - 5] = movement.1;
+                channel[SNAKE_CHANNEL_SIZE - 4] = movement.2;
+                channel[SNAKE_CHANNEL_SIZE - 3] = movement.3;
+                let (head_r, head_c) = match player.get_head() {
+                    Some(h) => h,
+                    None => {
+                        error!("Play was not dead but did not have a head");
+                        return channel;
+                    }
+                };
+                // scale to stabalize learning (particularly prevent exploding gradient)
+                channel[SNAKE_CHANNEL_SIZE - 2] = head_r as f32 / MAX_BOARD_SIZE as f32;
+                channel[SNAKE_CHANNEL_SIZE - 1] = head_c as f32 / MAX_BOARD_SIZE as f32;
+            }
+        }
+        channel
+    }
+
+    pub fn from_snake_game(game: &SnakeGame, vip: usize) -> Self {
         let grid = game.get_grid();
         let actual_size = grid.len();
-        let mut full_state = Vec::with_capacity(FULL_STATE_SIZE);
+        let mut full_state = Vec::with_capacity(SNAKE_CHANNEL_SIZE);
 
         // build the player channels
-        let all_players = game.get_all_players();
+        // ALWAYS but the vip first - this is what the bot is play
+        full_state.extend(SnakeGameVec::create_new_player_channel(game, vip));
         for i in 0..MAX_NUM_OF_TOTAL_PLAYERS {
-            let mut channel: Vec<f32> = vec![0.0; SNAKE_CHANNEL_SIZE];
-            if i < all_players.len() {
-                let player = &all_players[i];
-                if player.is_alive() {
-                    for (row, col) in &player.squares_taken {
-                        channel[row * MAX_BOARD_SIZE + col] = 1.0
-                    }
-                    let movement = match player.last_action {
-                        SnakeAction::Up => (1.0, 0.0, 0.0, 0.0),
-                        SnakeAction::Down => (0.0, 1.0, 0.0, 0.0),
-                        SnakeAction::Left => (0.0, 0.0, 1.0, 0.0),
-                        SnakeAction::Right => (0.0, 0.0, 0.0, 1.0),
-                    };
-                    channel[SNAKE_CHANNEL_SIZE - 6] = movement.0;
-                    channel[SNAKE_CHANNEL_SIZE - 5] = movement.1;
-                    channel[SNAKE_CHANNEL_SIZE - 4] = movement.2;
-                    channel[SNAKE_CHANNEL_SIZE - 3] = movement.3;
-                    let (head_r, head_c) = match player.get_head() {
-                        Some(h) => h,
-                        None => {
-                            error!("Play was not dead but had a head still");
-                            continue;
-                        }
-                    };
-                    // scale to stabalize learning (particularly prevent exploding gradient)
-                    channel[SNAKE_CHANNEL_SIZE - 2] = head_r as f32 / MAX_BOARD_SIZE as f32;
-                    channel[SNAKE_CHANNEL_SIZE - 1] = head_c as f32 / MAX_BOARD_SIZE as f32;
-                }
+            if i == vip {
+                continue;
             }
-
-            full_state.extend(channel);
+            full_state.extend(SnakeGameVec::create_new_player_channel(game, i));
         }
 
         // build the valid area channel
@@ -130,7 +137,7 @@ impl SnakeGameVec {
             }
         }
         full_state.extend(apple_channel);
-        
+        debug_assert_eq!(full_state.len(), FULL_STATE_SIZE);
         SnakeGameVec { vec: full_state }
     }
 }
@@ -173,6 +180,7 @@ impl Environment for SnakeGameEnv {
     type Action = SnakeAction;
 
     fn reset(&mut self) -> Self::State {
+        debug!("Reseting state");
         let mut rng = thread_rng();
         self.number_of_enemies = (self.number_of_enemies + 1) % (MAX_NUM_OF_TOTAL_PLAYERS - 1);
         let min_board_size = SnakeGame::get_min_grid_size(self.number_of_enemies + 1);
@@ -184,19 +192,24 @@ impl Environment for SnakeGameEnv {
             }
         };
         self.bots = Vec::with_capacity(self.number_of_enemies);
-        let bot_type = SnakeBotType::VALUES.choose(&mut rng).unwrap().clone();
+        let bot_type = [SnakeBotType::RandomMoveBot, SnakeBotType::ClosestAppleBot, SnakeBotType::KillerBot].choose(&mut rng).unwrap().clone();
         for i in 0..self.number_of_enemies {
             self.bots.push(bot_type.make_new_bot(i + 1));
         }
-        SnakeGameVec::from_snake_game(&self.game)
+        SnakeGameVec::from_snake_game(&self.game, 0)
     }
 
     fn step(&mut self, action: &Self::Action) -> (Self::State, f32, bool) {
+        if self.game.is_over() {
+            error!("Tried to step over a dead game");
+            return (SnakeGameVec::from_snake_game(&self.game, 0), 0.0, true)
+        }
+
         let size_before = {
             let us_before = self.game.get_player(0).unwrap();
             if us_before.is_dead() {
                 error!("Tried to continue to step after player was already dead");
-                return (SnakeGameVec::from_snake_game(&self.game), -10.0, true)
+                return (SnakeGameVec::from_snake_game(&self.game, 0), 0.0, true)
             }
             us_before.squares_taken.len()
         };
@@ -213,19 +226,26 @@ impl Environment for SnakeGameEnv {
         self.game.move_all_characters();
 
         if self.game.get_player(0).unwrap().is_dead() {
-            return (SnakeGameVec::from_snake_game(&self.game), -10.0, true) // get a -10 for dying -> very bad
+            return (SnakeGameVec::from_snake_game(&self.game, 0), -10.0, true) // get a -10 for dying -> very bad
         }
 
         let mut reward = 0.01; // reward for surviving
 
         let num_enemies_alive_after = self.game.get_all_players().iter().filter(|s| s.is_alive() && s.player_id != 0).count();
 
-        reward += (num_enemies_alive_before - num_enemies_alive_after) as f32 * 1.0; // get +1 for every dead enemy
+        reward += (num_enemies_alive_before - num_enemies_alive_after) as f32 * 2.0; // get +2 for every dead enemy
 
         let size_after = self.game.get_player(0).unwrap().squares_taken.len();
         reward += (size_after - size_before) as f32 * 1.0; // get a +1 for eating an apple
 
-        (SnakeGameVec::from_snake_game(&self.game), reward, false)
+        if let Some(winner) = self.game.get_winner() {
+            if winner == 0 {
+                // big reward for winning
+                reward += 10.0;
+            }
+        }
+
+        (SnakeGameVec::from_snake_game(&self.game, 0), reward, self.game.is_over())
     }
 
     fn get_action_mask(&self) -> Vec<bool> {
@@ -303,7 +323,7 @@ impl DQLBot {
 
 impl SnakeBot for DQLBot {
     fn make_move(&self, game_state: &SnakeGame) -> SnakeAction {
-        let (index, value) = NEWEST_MODEL.forward(&SnakeGameVec::from_snake_game(game_state).vec).0.iter()
+        let (index, value) = NEWEST_MODEL.forward(&SnakeGameVec::from_snake_game(game_state, self.player_indx).vec).0.iter()
                             .enumerate()
                             .fold((0, f32::NEG_INFINITY), |(current_max_idx, current_max_val), (idx, &val)| {
                                 if val > current_max_val {
@@ -322,6 +342,11 @@ impl SnakeBot for DQLBot {
 
     fn get_player_index(&self) -> usize {
         self.player_indx
+    }
+
+    fn warmup(&mut self) {
+        let _ = Lazy::force(&NEWEST_MODEL);
+        info!("DQL Bot is warmed up")
     }
 }
 

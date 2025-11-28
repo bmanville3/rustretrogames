@@ -1,6 +1,6 @@
 use std::{cmp::max, collections::VecDeque};
 
-use log::{debug, info, warn};
+use log::{debug, warn};
 use rand::{seq::SliceRandom, Rng};
 
 use super::snake_player::SnakePlayer;
@@ -225,10 +225,13 @@ impl SnakeGame {
     }
 
     pub fn check_for_winner(&mut self) {
+        if self.winner.is_some() {
+            return
+        }
         if self.snakes.len() == 1 {
             let first = &self.snakes[0];
             if first.is_dead() {
-                info!("Game over");
+                debug!("Game over");
                 self.winner = Some(first.player_id);
             }
             return;
@@ -245,7 +248,7 @@ impl SnakeGame {
             }
         }
         if let Some(winner) = pot_winner {
-            info!("Game over. Player {} won", winner.player_id + 1);
+            debug!("Game over. Player {} won", winner.player_id + 1);
             self.winner = Some(winner.player_id);
         }
     }
@@ -400,5 +403,9 @@ impl SnakeGame {
 
     pub fn get_min_grid_size(total_players: usize) -> usize {
         max(total_players * MIN_INCR + 2 * BOUNDARY + 1, MIN_BOARD_SIZE)
+    }
+
+    pub fn is_over(&self) -> bool {
+        self.winner.is_some()
     }
 }

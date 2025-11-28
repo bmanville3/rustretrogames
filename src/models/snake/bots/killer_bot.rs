@@ -1,5 +1,5 @@
 use log::error;
-use rand::Rng;
+use rand::{Rng, seq::SliceRandom};
 
 use crate::models::snake::{
     snake_bot::SnakeBot,
@@ -33,8 +33,9 @@ impl KillerBot {
             None => return None,
         };
         let other_last_move = other_snake.last_action.value();
-        let nx_is = other_head.0 as isize + other_last_move.0 as isize;
-        let ny_is = other_head.1 as isize + other_last_move.1 as isize;
+        // predict 2 moves ahead and not just one - trying not to kill ourselves
+        let nx_is = other_head.0 as isize +  2 * other_last_move.0 as isize;
+        let ny_is = other_head.1 as isize + 2 * other_last_move.1 as isize;
         if nx_is < 0 || ny_is < 0 {
             return None;
         }
@@ -115,8 +116,9 @@ impl SnakeBot for KillerBot {
                 return SnakeAction::get_random_action()
             }
         };
+        let mut rng = rand::thread_rng();
         // add a tiny bit of randomness so bots dont just go side-by-side up and down the board
-        if rand::thread_rng().gen::<f32>() < 0.95 {
+        if rng.gen::<f32>() < 0.90 {
             // prefer eating an apple if its within 3 steps
             if let Some(step_to_apple) = self.find_nearby_apple_step(&game_state, our_head, 3) {
                 let action =
@@ -153,10 +155,13 @@ impl SnakeBot for KillerBot {
             }
         }
 
-        for alt in SnakeAction::VARIANTS {
+        let mut variants: Vec<_> = SnakeAction::VARIANTS.to_vec();
+        variants.shuffle(&mut rng);
+
+        for alt in variants {
             let mv = alt.value();
-            if self.is_move_valid_and_safe(mv, our_head, last_move, &game_state) {
-                return alt.clone();
+            if self.is_move_valid_and_safe(mv, our_head, last_move, game_state) {
+                return alt;
             }
         }
 
